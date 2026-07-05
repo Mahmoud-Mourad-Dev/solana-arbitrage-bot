@@ -32,6 +32,15 @@ pub struct Config {
     pub lookup_tables: Vec<Pubkey>,
     /// Build + simulate but never submit.
     pub dry_run: bool,
+    /// Master submission switch. DEFAULT FALSE: without an explicit
+    /// ENABLE_SUBMIT=true in the environment, nothing ever leaves the box.
+    pub enable_submit: bool,
+    /// Jito path switch, also default false. Both flags must be true (and
+    /// DRY_RUN false) for a bundle to be sent.
+    pub enable_jito: bool,
+    /// Opportunities whose projected net (gross - tip - fees - margin)
+    /// falls below this are rejected before any RPC work.
+    pub min_net_profit_lamports: u64,
 }
 
 fn env_str(name: &str, default: &str) -> String {
@@ -83,7 +92,10 @@ impl Config {
             resubmit_cooldown_ms: env_parse("RESUBMIT_COOLDOWN_MS", 400u64)?,
             whirlpool_ttl_secs: env_parse("WHIRLPOOL_TTL_SECS", 10u64)?,
             lookup_tables,
-            dry_run: env_parse("DRY_RUN", false)?,
+            dry_run: env_parse("DRY_RUN", true)?,
+            enable_submit: env_parse("ENABLE_SUBMIT", false)?,
+            enable_jito: env_parse("ENABLE_JITO", false)?,
+            min_net_profit_lamports: env_parse("MIN_NET_PROFIT_LAMPORTS", 100_000u64)?,
         })
     }
 

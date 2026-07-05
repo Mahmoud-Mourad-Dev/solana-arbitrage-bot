@@ -99,7 +99,11 @@ export function loadConfig(requireGeyser = true): MonitorConfig {
     redisFlushIntervalMs: envInt("REDIS_FLUSH_INTERVAL_MS", 20),
     redisFlushMaxCommands: envInt("REDIS_FLUSH_MAX_COMMANDS", 256),
 
-    baseMints: envStr("BASE_MINTS", `${WSOL_MINT},${USDC_MINT}`)
+    // WSOL only by default: the Rust executor prices Jito tips in lamports
+    // and rejects non-WSOL bases, so publishing USDC-base cycles would only
+    // waste discovery time. Re-add USDC here once the executor gains a
+    // proper SOL/USDC conversion for its cost model.
+    baseMints: envStr("BASE_MINTS", WSOL_MINT)
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),

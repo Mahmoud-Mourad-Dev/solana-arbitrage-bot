@@ -8,8 +8,8 @@ description = "Atomic cyclic-arbitrage executor with on-chain profit enforcement
 no-entrypoint = []
 
 [dependencies]
+arb-common = { path = "../common", default-features = false }
 solana-program = "2.1"
-thiserror = "1"
 
 [lib]
 crate-type = ["cdylib", "lib"]

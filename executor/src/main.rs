@@ -22,13 +22,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, info, warn};
 
+use arb_common::opportunity::Opportunity;
 use arb_executor::blockhash::BlockhashCache;
 use arb_executor::builder::{build_bundle_transaction, BundleParams};
 use arb_executor::config::Config;
 use arb_executor::jito::{random_tip_account, JitoClient};
 use arb_executor::resolver::{derive_ata, Resolver, ATA_PROGRAM, WSOL_MINT};
 use arb_executor::tip::compute_tip;
-use arb_executor::types::Opportunity;
 use arbitrage_program::TOKEN_PROGRAM;
 
 struct App {
@@ -57,7 +57,17 @@ async fn main() -> Result<()> {
     let cfg = Config::from_env()?;
     let payer = read_keypair_file(&cfg.keypair_path)
         .map_err(|e| anyhow::anyhow!("read keypair {}: {e}", cfg.keypair_path))?;
-    info!(payer = %payer.pubkey(), program = %cfg.arb_program_id, dry_run = cfg.dry_run, "executor starting");
+    info!(
+        payer = %payer.pubkey(),
+        program = %cfg.arb_program_id,
+        dry_run = cfg.dry_run,
+        enable_submit = cfg.enable_submit,
+        enable_jito = cfg.enable_jito,
+        "executor starting"
+    );
+    if !cfg.dry_run && cfg.enable_submit && cfg.enable_jito {
+        warn!("SUBMISSION ARMED — live bundles will be sent to Jito");
+    }
 
     let rpc = Arc::new(RpcClient::new_with_commitment(
         cfg.rpc_url.clone(),
@@ -216,6 +226,14 @@ async fn handle_opportunity(app: &App, opp: Opportunity) -> Result<()> {
             opp.id
         );
     }
+    let projected_net = opp.gross_profit - min_profit;
+    if projected_net < app.cfg.min_net_profit_lamports {
+        bail!(
+            "below MIN_NET_PROFIT_LAMPORTS: net={projected_net} < {} (id={})",
+            app.cfg.min_net_profit_lamports,
+            opp.id
+        );
+    }
 
     // 5) Resolve every hop into its full CPI account list.
     let mut hops = Vec::with_capacity(opp.hops.len());
@@ -242,15 +260,21 @@ async fn handle_opportunity(app: &App, opp: Opportunity) -> Result<()> {
         lookup_tables: &app.lookup_tables,
     })?;
 
-    // 7) Dry-run: simulate and report instead of submitting.
-    if app.cfg.dry_run {
+    // 7) Submission gate: real submits need DRY_RUN=false AND explicit
+    //    ENABLE_SUBMIT=true AND ENABLE_JITO=true. Anything less simulates.
+    let submit_armed = !app.cfg.dry_run && app.cfg.enable_submit && app.cfg.enable_jito;
+    if !submit_armed {
         let sim = app.rpc.simulate_transaction(&tx).await?;
         info!(
             id = %opp.id,
             err = ?sim.value.err,
             cu = ?sim.value.units_consumed,
             tip,
-            "DRY RUN simulation"
+            projected_net,
+            dry_run = app.cfg.dry_run,
+            enable_submit = app.cfg.enable_submit,
+            enable_jito = app.cfg.enable_jito,
+            "SIMULATION ONLY (submission disarmed)"
         );
         return Ok(());
     }

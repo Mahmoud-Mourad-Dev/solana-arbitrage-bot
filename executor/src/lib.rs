@@ -7,4 +7,3 @@ pub mod config;
 pub mod jito;
 pub mod resolver;
 pub mod tip;
-pub mod types;

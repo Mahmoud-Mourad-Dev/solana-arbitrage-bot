@@ -7,7 +7,7 @@
 //! recommended for 3-4 hop routes).
 
 use anyhow::{bail, Context, Result};
-use arbitrage_program::{encode_instruction, DexKind as ProgDex, HopParams, IxParams};
+use arb_common::ix::{encode_instruction, HopParams, IxParams};
 use solana_sdk::{
     address_lookup_table::AddressLookupTableAccount,
     compute_budget::ComputeBudgetInstruction,
@@ -22,7 +22,6 @@ use solana_sdk::{
 use solana_system_interface::instruction as system_instruction;
 
 use crate::resolver::ResolvedHop;
-use crate::types::DexKind;
 
 /// Solana packet size — a serialized tx beyond this can never land.
 pub const MAX_TX_BYTES: usize = 1232;
@@ -57,10 +56,7 @@ pub fn build_arb_instruction(
         hops: hops
             .iter()
             .map(|h| HopParams {
-                dex: match h.dex {
-                    DexKind::RaydiumV4 => ProgDex::RaydiumV4,
-                    DexKind::OrcaWhirlpool => ProgDex::OrcaWhirlpool,
-                },
+                dex: h.dex,
                 num_accounts: h.metas.len() as u8,
                 source_index: h.source_index,
                 a_to_b: h.a_to_b,
@@ -119,7 +115,7 @@ pub fn build_bundle_transaction(p: &BundleParams<'_>) -> Result<VersionedTransac
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arbitrage_program::parse_instruction;
+    use arb_common::ix::{parse_instruction, DexKind};
 
     /// Realistic hop shape: unique writable accounts, with the user owner
     /// (the payer) as the only signer meta — exactly what the resolver emits.
@@ -158,7 +154,7 @@ mod tests {
         assert_eq!(parsed.amount_in, 1_000_000_000);
         assert_eq!(parsed.min_profit, 1_205_000);
         assert_eq!(parsed.hops.len(), 2);
-        assert_eq!(parsed.hops[0].dex, ProgDex::OrcaWhirlpool);
+        assert_eq!(parsed.hops[0].dex, DexKind::OrcaWhirlpool);
         assert_eq!(parsed.hops[0].num_accounts, 12);
         assert_eq!(parsed.hops[0].source_index, 4);
         assert!(parsed.hops[0].a_to_b);

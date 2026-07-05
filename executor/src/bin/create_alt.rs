@@ -6,8 +6,9 @@
 //! Usage: KEYPAIR_PATH=... RPC_ENDPOINT=... create-alt [path/to/pools.json]
 
 use anyhow::{Context, Result};
+use arb_common::ix::DexKind;
+use arb_common::opportunity::OpportunityHop;
 use arb_executor::resolver::{derive_ata, Resolver, WSOL_MINT};
-use arb_executor::types::{DexKind, OpportunityHop};
 use arbitrage_program::TOKEN_PROGRAM;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;

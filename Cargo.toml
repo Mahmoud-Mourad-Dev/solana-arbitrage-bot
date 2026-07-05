@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["program", "executor"]
+members = ["common", "program", "executor", "monitor"]
 
 [profile.release]
 overflow-checks = true

@@ -1,0 +1,16 @@
+[package]
+name = "arb-common"
+version = "0.1.0"
+edition = "2021"
+description = "Shared byte-level types: instruction ABI + opportunity wire format. No Solana dependencies — usable from the on-chain program (incl. future Pinocchio no_std) and every off-chain crate."
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+thiserror = "1"
+
+[dev-dependencies]
+serde_json = "1"

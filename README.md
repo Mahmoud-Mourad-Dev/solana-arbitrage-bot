@@ -4,9 +4,30 @@ Cyclic arbitrage system for Solana mainnet-beta, in three layers:
 
 | Layer | Tech | Path |
 |---|---|---|
-| Price monitor + discovery | TypeScript, Yellowstone Geyser gRPC, Redis | `src/` |
-| On-chain atomic executor | Rust (native `solana-program`, no Anchor) | `program/` |
-| Off-chain execution bot | Rust, tokio, Jito Block Engine | `executor/` |
+| Shared wire/ABI types | Rust, zero Solana deps | `common/` |
+| Price monitor + discovery | TypeScript (production) — Rust port in progress | `src/` → `monitor/` |
+| On-chain atomic executor | Rust (native `solana-program`, no Anchor; Pinocchio planned) | `program/` |
+| Off-chain execution bot | Rust, tokio, Jito Block Engine (base64 bundles) | `executor/` |
+
+**Rust-only migration status:** Phases A + B done.
+- `common/` — frozen instruction ABI + opportunity JSON types (program
+  parses, executor encodes, monitor produces; one definition, no drift).
+- `monitor/` — full Rust price monitor: Yellowstone Geyser gRPC (client
+  13.x, library-managed reconnect/dedup) → binary parsers → pool registry
+  → precomputed cycle index + discovery → Redis publisher emitting the
+  **same JSON** as the TypeScript monitor. Quote math runs on U256/U512
+  (not u128) because the Whirlpool `L<<64 · S0` term reaches 2^320.
+  Bit-exact parity with the compiled TS math is asserted by tests using
+  reference vectors captured from `dist/`.
+
+The TypeScript monitor in `src/` stays the production producer until
+`monitor/` is validated against live traffic side-by-side. Submission is
+disarmed by default: real bundles require `DRY_RUN=false` **and**
+`ENABLE_SUBMIT=true` **and** `ENABLE_JITO=true`.
+
+```bash
+cargo run -p arb-monitor    # Rust monitor (reads the same .env + pools.json)
+```
 
 ```
 Geyser ─> TS monitor ─> Redis PUBLISH arbitrage_opportunities

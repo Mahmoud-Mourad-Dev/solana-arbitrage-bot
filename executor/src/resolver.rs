@@ -18,7 +18,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use crate::types::{DexKind, OpportunityHop};
+use arb_common::ix::DexKind;
+use arb_common::opportunity::OpportunityHop;
 
 pub const ATA_PROGRAM: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 pub const WSOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
