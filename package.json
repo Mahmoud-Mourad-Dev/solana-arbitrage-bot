@@ -1,0 +1,29 @@
+{
+  "name": "solana-arbitrage-bot",
+  "version": "0.1.0",
+  "description": "Off-chain price monitor + cyclic arbitrage discovery engine for Solana mainnet-beta (Yellowstone Geyser gRPC + Redis)",
+  "private": true,
+  "main": "dist/price-monitor.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/price-monitor.js",
+    "dev": "tsx src/price-monitor.ts",
+    "selftest": "tsx src/selftest.ts",
+    "verify:layouts": "tsx scripts/verify-layouts.ts"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.95.3",
+    "@triton-one/yellowstone-grpc": "^1.3.0",
+    "bs58": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}

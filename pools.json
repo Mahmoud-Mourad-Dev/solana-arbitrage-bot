@@ -1,0 +1,25 @@
+{
+  "comment": "Watched liquidity pools. Vaults / mints / fees are hydrated automatically from chain at bootstrap — only the pool account address and dex kind are required. Invalid entries are skipped with a warning.",
+  "pools": [
+    {
+      "label": "Raydium v4 SOL/USDC",
+      "dex": "raydium-v4",
+      "address": "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2"
+    },
+    {
+      "label": "Raydium v4 RAY/USDC",
+      "dex": "raydium-v4",
+      "address": "6UmmUiYoBjSrhakAobJw8BvkmJtDVxaeBtbt7rxWo1mg"
+    },
+    {
+      "label": "Raydium v4 RAY/SOL",
+      "dex": "raydium-v4",
+      "address": "AVs9TA4nWDzfPJE9gGVNJMVhcQy3V9PGazuz33BfG2RA"
+    },
+    {
+      "label": "Orca Whirlpool SOL/USDC (ts=64)",
+      "dex": "orca-whirlpool",
+      "address": "HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ"
+    }
+  ]
+}

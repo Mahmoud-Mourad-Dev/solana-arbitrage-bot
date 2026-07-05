@@ -1,0 +1,23 @@
+[package]
+name = "arbitrage-program"
+version = "0.1.0"
+edition = "2021"
+description = "Atomic cyclic-arbitrage executor with on-chain profit enforcement"
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+solana-program = "2.1"
+thiserror = "1"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+# entrypoint! expands cfg checks for optional custom-heap/custom-panic
+# features; declare them so newer toolchains don't warn.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(feature, values("custom-heap", "custom-panic"))',
+  'cfg(target_os, values("solana"))',
+] }
