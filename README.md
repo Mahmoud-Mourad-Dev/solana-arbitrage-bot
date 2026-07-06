@@ -8,6 +8,30 @@ Cyclic arbitrage system for Solana mainnet-beta, in three layers:
 | Price monitor + discovery | TypeScript (production) — Rust port validated | `src/` → `monitor/` |
 | On-chain atomic executor | Rust **Pinocchio** (`no_std`, no Anchor, no solana-program) | `program/` |
 | Off-chain execution bot | Rust, tokio, Jito Block Engine (base64 bundles) | `executor/` |
+| **Fused single-process bot** | Rust — monitor + executor via `tokio::mpsc` | `bot/` |
+
+### Fused bot (Phase D)
+
+`arb-bot` runs the monitor pipeline and the executor in **one process**,
+connected by an in-process bounded `tokio::sync::mpsc` channel — the
+`DiscoveryEngine` feeds opportunities straight to the executor with no
+serialization and **no Redis on the hot path**. The channel uses `try_send`,
+so a slow executor drops stale opportunities rather than stalling Geyser
+ingestion. Redis becomes optional: `MONITOR_REDIS_MIRROR=true` also publishes
+for external observability, off the critical path.
+
+The monitor pipeline (`arb_monitor::pipeline`) and executor core
+(`arb_executor::app::App`) are shared library code, so the standalone
+`arb-monitor` + `arb-executor` (Redis-decoupled) and the fused `arb-bot` run
+the exact same logic. Safety posture is unchanged — still simulates unless
+`DRY_RUN=false` AND `ENABLE_SUBMIT=true` AND `ENABLE_JITO=true`.
+
+```bash
+cargo run -p arb-bot            # everything in one process (reads the same .env)
+# or the decoupled pair:
+cargo run -p arb-monitor        # Geyser -> discovery -> Redis
+cargo run -p arb-executor       # Redis -> Jito
+```
 
 ### On-chain program — Pinocchio migration (Phase E)
 

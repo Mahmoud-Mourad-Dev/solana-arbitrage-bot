@@ -1,0 +1,19 @@
+[package]
+name = "arb-bot"
+version = "0.1.0"
+edition = "2021"
+description = "Fused single-process arbitrage bot: monitor pipeline -> in-process mpsc channel -> executor. Redis is optional (observability mirror only, off the hot path)."
+
+[dependencies]
+arb-common = { path = "../common" }
+arb-monitor = { path = "../monitor" }
+arb-executor = { path = "../executor" }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "arb-bot"
+path = "src/main.rs"

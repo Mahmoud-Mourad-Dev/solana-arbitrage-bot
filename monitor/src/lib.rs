@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod geyser;
 pub mod math;
 pub mod parsers;
+pub mod pipeline;
 pub mod quote;
 pub mod redis_sink;
 pub mod registry;

@@ -1,6 +1,7 @@
-//! arb-executor library: shared by the main executor binary and the
-//! `create-alt` lookup-table management binary.
+//! arb-executor library: shared by the standalone executor binary, the
+//! fused `arb-bot` binary, and the `create-alt` lookup-table utility.
 
+pub mod app;
 pub mod blockhash;
 pub mod builder;
 pub mod config;
