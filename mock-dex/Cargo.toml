@@ -1,0 +1,17 @@
+[package]
+name = "mock-dex"
+version = "0.1.0"
+edition = "2021"
+description = "Test-only stand-in for a DEX program: on invoke it performs one SPL token transfer of the amount encoded in the swap data, so the arbitrage program's CPI + profit-check path can be exercised in mollusk without a real AMM."
+
+[dependencies]
+solana-program = "2.1"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(feature, values("custom-heap", "custom-panic"))',
+  'cfg(target_os, values("solana"))',
+] }
