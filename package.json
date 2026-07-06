@@ -9,7 +9,8 @@
     "start": "node dist/price-monitor.js",
     "dev": "tsx src/price-monitor.ts",
     "selftest": "tsx src/selftest.ts",
-    "verify:layouts": "tsx scripts/verify-layouts.ts"
+    "verify:layouts": "tsx scripts/verify-layouts.ts",
+    "verify:parity": "bash validation/run-parity.sh"
   },
   "engines": {
     "node": ">=18"

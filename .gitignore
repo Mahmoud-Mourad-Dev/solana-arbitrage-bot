@@ -3,3 +3,5 @@ dist/
 .env
 target/
 .DS_Store
+validation/out-ts.json
+validation/out-rs.json

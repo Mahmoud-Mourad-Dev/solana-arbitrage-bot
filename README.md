@@ -29,6 +29,23 @@ disarmed by default: real bundles require `DRY_RUN=false` **and**
 cargo run -p arb-monitor    # Rust monitor (reads the same .env + pools.json)
 ```
 
+### Differential parity (Phase B validation)
+
+`validation/` proves the Rust engine emits the **same opportunities** as the
+TypeScript engine. One fixture file (`scenarios.json`) is fed to both
+`DiscoveryEngine`s; a semantic diff asserts every id, amount, per-hop leg,
+net profit, bps and slot is identical (key order / int-vs-float ignored).
+Covers a 2-hop arb, a 3-hop cycle, and gating cases (drained pool,
+waiting-trade status). Fully offline — no Geyser/Redis needed.
+
+```bash
+npm run verify:parity   # build TS + run both engines + compare
+```
+
+Live side-by-side validation (run `npm run dev` and `cargo run -p
+arb-monitor` against the same Geyser + Redis and compare the published
+stream) is the remaining step and needs a real `GEYSER_ENDPOINT`.
+
 ```
 Geyser ─> TS monitor ─> Redis PUBLISH arbitrage_opportunities
                               │

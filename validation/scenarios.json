@@ -1,0 +1,145 @@
+{
+  "_comment": "Shared differential-parity fixtures. Fed to BOTH the TypeScript DiscoveryEngine and the Rust arb-monitor engine; their emitted opportunities must be byte-identical (discoveredAtMs excluded). Mints are real mainnet mints; pool/vault/openOrders addresses are deterministic valid pubkeys. Raydium pools give effective reserves directly (harness sets vault=reserve, openOrders/pnl=0).",
+  "mints": {
+    "WSOL": "So11111111111111111111111111111111111111112",
+    "USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "RAY": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"
+  },
+  "addresses": {
+    "POOL_RAY_SOLUSDC": "GtF7Qsp9J8mGGyyDk7E9pnmaqkTrv9G3xQ2oTEUCd6Ky",
+    "POOL_ORCA_SOLUSDC": "5Ug1DjAsVcNmfTi2A4mRAzT7SDFnB8BXZ5uyrJNxymJn",
+    "POOL_RAY_RAYUSDC": "HQj3bokyNP2v49MQebuEvQca7CeM9bLbv61U58qnHTup",
+    "POOL_ORCA_RAYSOL": "8tcfywmRcNNeFMby7TX94E6YW4PQoUMu8mzcmiLSPN5T",
+    "POOL_RAY_SOLUSDC_2": "4YHihRHH5EYZd7wjQJPea2fLTqCdC3xx9P6qXg7ej8Pm",
+    "VAULT1": "6RiYLDCHR4DnAjKbpRRDkVgkqUymf9JKmxZggL7DPERK",
+    "VAULT2": "E37k8B7EuHujjtMmsb44nKpJZzSq5wKrcMsdgHN1kbFR",
+    "VAULT3": "3q2MvnN1BWW63pGXamMaC92rmaMtiVHhtDbPXxVRnQom",
+    "VAULT4": "HCusyEG1pdrmUsemKuPigSd8LePRb9KnpZhQu9WxoWSE",
+    "VAULT5": "9uiNtL3FsYX4qMgVijc5yUtRRzDuDs4NJgdhzpPCkA97",
+    "VAULT6": "FJ7uYBmu3vLAnMrK4bbZHqhHeHVwgxZKA4GPZZTYGVEz",
+    "VAULT7": "BjvDuswDzCnxizACECMjKLjfjx9r8tYN66nrvWjpF9Kq",
+    "VAULT8": "5MtVhfVYyPgTvWrNRiRL6bUskz9sfxd1K4jqg2zTzTzS",
+    "OO1": "GrLykbKpKpF88GxkFQE3easVBz8AVpWsuQM8Wuc6Whkc",
+    "OO2": "7nTuJHxLho6So5ug2NbNUKzBGtfCW1j15CqB8bu9ayCW",
+    "OO3": "EmpReSginyBh9zNBnuRZdx9Tx9eGA6UZZizJwJj6q7NZ"
+  },
+  "config": {
+    "baseMints": ["WSOL"],
+    "maxHops": 4,
+    "minProfitBps": 5,
+    "slippageBps": 20,
+    "maxClmmImpactBps": 100,
+    "baseSignatureFeeLamports": "5000",
+    "priorityFeeLamports": "100000",
+    "jitoTipLamports": "1000000",
+    "opportunityCooldownMs": 500,
+    "tradeBounds": {
+      "WSOL": { "min": "50000000", "max": "10000000000" },
+      "USDC": { "min": "5000000", "max": "1500000000" }
+    }
+  },
+  "scenarios": [
+    {
+      "name": "sol_usdc_2pct_gap_profitable",
+      "dirty": ["POOL_RAY_SOLUSDC", "POOL_ORCA_SOLUSDC"],
+      "pools": [
+        {
+          "address": "POOL_RAY_SOLUSDC", "dex": "raydium-v4",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 100,
+          "vaultA": "VAULT1", "vaultB": "VAULT2", "openOrders": "OO1",
+          "reserveBase": "5000000000000", "reserveQuote": "750000000000",
+          "feeNum": 25, "feeDen": 10000, "status": 6, "poolOpenTime": 0
+        },
+        {
+          "address": "POOL_ORCA_SOLUSDC", "dex": "orca-whirlpool",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 100,
+          "vaultA": "VAULT3", "vaultB": "VAULT4",
+          "sqrtPriceX64": "7216072408257405000", "liquidity": "10000000000000000", "feeRatePpm": 3000
+        }
+      ]
+    },
+    {
+      "name": "sol_usdc_no_gap_unprofitable",
+      "dirty": ["POOL_RAY_SOLUSDC", "POOL_ORCA_SOLUSDC"],
+      "pools": [
+        {
+          "address": "POOL_RAY_SOLUSDC", "dex": "raydium-v4",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 200,
+          "vaultA": "VAULT1", "vaultB": "VAULT2", "openOrders": "OO1",
+          "reserveBase": "5000000000000", "reserveQuote": "750000000000",
+          "feeNum": 25, "feeDen": 10000, "status": 6, "poolOpenTime": 0
+        },
+        {
+          "address": "POOL_ORCA_SOLUSDC", "dex": "orca-whirlpool",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 200,
+          "vaultA": "VAULT3", "vaultB": "VAULT4",
+          "sqrtPriceX64": "7071067811865475244", "liquidity": "10000000000000000", "feeRatePpm": 3000
+        }
+      ]
+    },
+    {
+      "name": "drained_raydium_unquotable",
+      "dirty": ["POOL_RAY_SOLUSDC", "POOL_ORCA_SOLUSDC"],
+      "pools": [
+        {
+          "address": "POOL_RAY_SOLUSDC", "dex": "raydium-v4",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 300,
+          "vaultA": "VAULT1", "vaultB": "VAULT2", "openOrders": "OO1",
+          "reserveBase": "0", "reserveQuote": "750000000000",
+          "feeNum": 25, "feeDen": 10000, "status": 6, "poolOpenTime": 0
+        },
+        {
+          "address": "POOL_ORCA_SOLUSDC", "dex": "orca-whirlpool",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 300,
+          "vaultA": "VAULT3", "vaultB": "VAULT4",
+          "sqrtPriceX64": "7216072408257405000", "liquidity": "10000000000000000", "feeRatePpm": 3000
+        }
+      ]
+    },
+    {
+      "name": "raydium_waiting_trade_status_gated",
+      "dirty": ["POOL_RAY_SOLUSDC", "POOL_ORCA_SOLUSDC"],
+      "pools": [
+        {
+          "address": "POOL_RAY_SOLUSDC", "dex": "raydium-v4",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 400,
+          "vaultA": "VAULT1", "vaultB": "VAULT2", "openOrders": "OO1",
+          "reserveBase": "5000000000000", "reserveQuote": "750000000000",
+          "feeNum": 25, "feeDen": 10000, "status": 7, "poolOpenTime": "99999999999"
+        },
+        {
+          "address": "POOL_ORCA_SOLUSDC", "dex": "orca-whirlpool",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 400,
+          "vaultA": "VAULT3", "vaultB": "VAULT4",
+          "sqrtPriceX64": "7216072408257405000", "liquidity": "10000000000000000", "feeRatePpm": 3000
+        }
+      ]
+    },
+    {
+      "name": "three_hop_sol_usdc_ray_sol",
+      "dirty": ["POOL_RAY_SOLUSDC", "POOL_RAY_RAYUSDC", "POOL_ORCA_RAYSOL"],
+      "pools": [
+        {
+          "address": "POOL_RAY_SOLUSDC", "dex": "raydium-v4",
+          "mintA": "WSOL", "mintB": "USDC", "decimalsA": 9, "decimalsB": 6, "slot": 500,
+          "vaultA": "VAULT1", "vaultB": "VAULT2", "openOrders": "OO1",
+          "reserveBase": "5000000000000", "reserveQuote": "750000000000",
+          "feeNum": 25, "feeDen": 10000, "status": 6, "poolOpenTime": 0
+        },
+        {
+          "address": "POOL_RAY_RAYUSDC", "dex": "raydium-v4",
+          "mintA": "RAY", "mintB": "USDC", "decimalsA": 6, "decimalsB": 6, "slot": 500,
+          "vaultA": "VAULT5", "vaultB": "VAULT6", "openOrders": "OO2",
+          "reserveBase": "10000000000000", "reserveQuote": "20000000000",
+          "feeNum": 25, "feeDen": 10000, "status": 6, "poolOpenTime": 0
+        },
+        {
+          "address": "POOL_ORCA_RAYSOL", "dex": "orca-whirlpool",
+          "mintA": "RAY", "mintB": "WSOL", "decimalsA": 6, "decimalsB": 9, "slot": 500,
+          "vaultA": "VAULT7", "vaultB": "VAULT8",
+          "sqrtPriceX64": "1400000000000000000", "liquidity": "5000000000000000", "feeRatePpm": 3000
+        }
+      ]
+    }
+  ]
+}
