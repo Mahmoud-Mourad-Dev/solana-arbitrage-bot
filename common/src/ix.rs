@@ -19,7 +19,7 @@
 //! No Borsh, no Anchor discriminator for OUR program. The Whirlpool Anchor
 //! discriminator below belongs to the EXTERNAL Whirlpool program's `swap`.
 
-use thiserror::Error;
+use alloc::vec::Vec;
 
 pub const MAX_HOPS: usize = 4;
 pub const HEADER_LEN: usize = 17;
@@ -42,34 +42,67 @@ pub const RAYDIUM_V4_PROGRAM_STR: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFS
 pub const WHIRLPOOL_PROGRAM_STR: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 pub const TOKEN_PROGRAM_STR: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
+/// Base58-decoded program ids. These are the on-chain source of truth (the
+/// Pinocchio program builds its `Address` constants from them, avoiding a
+/// base58 decoder on-chain). `program_id_bytes_match_str` guards that they
+/// equal the canonical `*_STR` above.
+pub const RAYDIUM_V4_PROGRAM_ID: [u8; 32] = [
+    75, 217, 73, 196, 54, 2, 195, 63, 32, 119, 144, 237, 22, 163, 82, 76, 161, 185, 151, 92, 241,
+    33, 162, 169, 12, 255, 236, 125, 248, 182, 138, 205,
+];
+pub const WHIRLPOOL_PROGRAM_ID: [u8; 32] = [
+    14, 3, 104, 95, 142, 144, 144, 83, 228, 88, 18, 28, 102, 245, 167, 106, 237, 199, 112, 106,
+    161, 28, 130, 248, 170, 149, 42, 143, 43, 120, 121, 169,
+];
+pub const TOKEN_PROGRAM_ID: [u8; 32] = [
+    6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237,
+    95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+];
+
 /// Stable custom error codes surfaced as `ProgramError::Custom(code)`.
 /// Codes are FROZEN — executors match on them for landed-tx forensics.
-#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum ArbError {
-    #[error("malformed instruction data")]
     MalformedInstruction = 0,
-    #[error("hop count must be 1..=4")]
     BadHopCount = 1,
-    #[error("unknown dex tag")]
     UnknownDex = 2,
-    #[error("hop account slice out of bounds")]
     AccountSliceOutOfBounds = 3,
-    #[error("hop program id does not match declared dex")]
     InvalidDexProgram = 4,
-    #[error("account is not a valid SPL token account")]
     InvalidTokenAccount = 5,
-    #[error("token account not owned by authority")]
     TokenAccountOwnerMismatch = 6,
-    #[error("arithmetic overflow")]
     ArithmeticOverflow = 7,
-    #[error("cycle finished below required profit — reverting")]
     ProfitNotMet = 8,
-    #[error("authority signature missing")]
     MissingSignature = 9,
-    #[error("hop input amount is zero")]
     ZeroAmount = 10,
 }
+
+impl ArbError {
+    pub const fn message(self) -> &'static str {
+        match self {
+            ArbError::MalformedInstruction => "malformed instruction data",
+            ArbError::BadHopCount => "hop count must be 1..=4",
+            ArbError::UnknownDex => "unknown dex tag",
+            ArbError::AccountSliceOutOfBounds => "hop account slice out of bounds",
+            ArbError::InvalidDexProgram => "hop program id does not match declared dex",
+            ArbError::InvalidTokenAccount => "account is not a valid SPL token account",
+            ArbError::TokenAccountOwnerMismatch => "token account not owned by authority",
+            ArbError::ArithmeticOverflow => "arithmetic overflow",
+            ArbError::ProfitNotMet => "cycle finished below required profit — reverting",
+            ArbError::MissingSignature => "authority signature missing",
+            ArbError::ZeroAmount => "hop input amount is zero",
+        }
+    }
+}
+
+impl core::fmt::Display for ArbError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ArbError {}
 
 /// DEX tag: byte value is the wire encoding; serde names match the
 /// TypeScript monitor's JSON (`"raydium-v4"` / `"orca-whirlpool"`).
@@ -295,6 +328,23 @@ mod tests {
         assert_eq!(ArbError::ZeroAmount as u32, 10);
         assert_eq!(DexKind::RaydiumV4 as u8, 0);
         assert_eq!(DexKind::OrcaWhirlpool as u8, 1);
+    }
+
+    /// The hardcoded on-chain program-id bytes MUST equal the base58 ids.
+    #[test]
+    fn program_id_bytes_match_str() {
+        assert_eq!(
+            bs58::decode(RAYDIUM_V4_PROGRAM_STR).into_vec().unwrap(),
+            RAYDIUM_V4_PROGRAM_ID
+        );
+        assert_eq!(
+            bs58::decode(WHIRLPOOL_PROGRAM_STR).into_vec().unwrap(),
+            WHIRLPOOL_PROGRAM_ID
+        );
+        assert_eq!(
+            bs58::decode(TOKEN_PROGRAM_STR).into_vec().unwrap(),
+            TOKEN_PROGRAM_ID
+        );
     }
 
     #[cfg(feature = "serde")]

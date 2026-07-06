@@ -171,7 +171,7 @@ mod tests {
     /// without lookup tables.
     #[test]
     fn realistic_two_hop_transaction_fits() {
-        use arbitrage_program::{RAYDIUM_V4_PROGRAM, TOKEN_PROGRAM, WHIRLPOOL_PROGRAM};
+        use crate::resolver::{RAYDIUM_V4_PROGRAM, TOKEN_PROGRAM, WHIRLPOOL_PROGRAM};
         let payer = Keypair::new();
         let owner = payer.pubkey();
         let wsol_ata = Pubkey::new_unique();

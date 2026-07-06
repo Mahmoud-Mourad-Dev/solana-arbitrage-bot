@@ -8,8 +8,8 @@
 use anyhow::{Context, Result};
 use arb_common::ix::DexKind;
 use arb_common::opportunity::OpportunityHop;
+use arb_executor::resolver::TOKEN_PROGRAM;
 use arb_executor::resolver::{derive_ata, Resolver, WSOL_MINT};
-use arbitrage_program::TOKEN_PROGRAM;
 use serde::Deserialize;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{

@@ -9,7 +9,6 @@
 //!   refreshed after a TTL.
 
 use anyhow::{anyhow, bail, Context, Result};
-use arbitrage_program::{RAYDIUM_V4_PROGRAM, TOKEN_PROGRAM, WHIRLPOOL_PROGRAM};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{instruction::AccountMeta, pubkey, pubkey::Pubkey};
 use std::collections::HashMap;
@@ -18,8 +17,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use arb_common::ix::DexKind;
+use arb_common::ix::{DexKind, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID, WHIRLPOOL_PROGRAM_ID};
 use arb_common::opportunity::OpportunityHop;
+
+// Program ids as solana Pubkeys, built from arb-common's canonical bytes
+// (the same source of truth the on-chain program uses).
+pub const RAYDIUM_V4_PROGRAM: Pubkey = Pubkey::new_from_array(RAYDIUM_V4_PROGRAM_ID);
+pub const WHIRLPOOL_PROGRAM: Pubkey = Pubkey::new_from_array(WHIRLPOOL_PROGRAM_ID);
+pub const TOKEN_PROGRAM: Pubkey = Pubkey::new_from_array(TOKEN_PROGRAM_ID);
 
 pub const ATA_PROGRAM: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 pub const WSOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");

@@ -7,8 +7,13 @@
 //! - [`opportunity`] (feature `serde`): the JSON payload published by the
 //!   price monitor on the `arbitrage_opportunities` Redis channel.
 //!
-//! This crate deliberately has ZERO Solana dependencies so the future
-//! Pinocchio (no_std-style) program can depend on it unchanged.
+//! This crate is `no_std` by default (only `alloc`) with ZERO Solana
+//! dependencies, so the Pinocchio on-chain program can depend on it
+//! unchanged. Enable the `std` feature (default) for off-chain use.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 pub mod ix;
 

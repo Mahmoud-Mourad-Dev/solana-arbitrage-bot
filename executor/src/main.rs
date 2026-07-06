@@ -27,9 +27,8 @@ use arb_executor::blockhash::BlockhashCache;
 use arb_executor::builder::{build_bundle_transaction, BundleParams};
 use arb_executor::config::Config;
 use arb_executor::jito::{random_tip_account, JitoClient};
-use arb_executor::resolver::{derive_ata, Resolver, ATA_PROGRAM, WSOL_MINT};
+use arb_executor::resolver::{derive_ata, Resolver, ATA_PROGRAM, TOKEN_PROGRAM, WSOL_MINT};
 use arb_executor::tip::compute_tip;
-use arbitrage_program::TOKEN_PROGRAM;
 
 struct App {
     cfg: Config,

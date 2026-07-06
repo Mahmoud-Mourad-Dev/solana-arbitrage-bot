@@ -4,12 +4,32 @@ Cyclic arbitrage system for Solana mainnet-beta, in three layers:
 
 | Layer | Tech | Path |
 |---|---|---|
-| Shared wire/ABI types | Rust, zero Solana deps | `common/` |
-| Price monitor + discovery | TypeScript (production) — Rust port in progress | `src/` → `monitor/` |
-| On-chain atomic executor | Rust (native `solana-program`, no Anchor; Pinocchio planned) | `program/` |
+| Shared wire/ABI types | Rust, `no_std` + alloc, zero Solana deps | `common/` |
+| Price monitor + discovery | TypeScript (production) — Rust port validated | `src/` → `monitor/` |
+| On-chain atomic executor | Rust **Pinocchio** (`no_std`, no Anchor, no solana-program) | `program/` |
 | Off-chain execution bot | Rust, tokio, Jito Block Engine (base64 bundles) | `executor/` |
 
-**Rust-only migration status:** Phases A + B done.
+### On-chain program — Pinocchio migration (Phase E)
+
+`program/` is a `no_std` Pinocchio program. The instruction ABI (17-byte
+header, 12-byte hops, custom error codes) is **frozen in `common/` and
+unchanged** from the previous `solana-program` build — the executor needed
+zero wire changes. A mollusk acceptance-contract suite
+(`program/tests/integration.rs`, 7 tests + a `mock-dex` CPI stand-in) runs
+unchanged against both builds, asserting exact revert codes and a real
+CPI + profit-check success path. Measured before → after:
+
+| | solana-program | Pinocchio | Δ |
+|---|---|---|---|
+| Binary size | 33,400 B | 24,296 B | **−27%** |
+| Success-path CU | 7,243 | 5,461 | **−25%** |
+
+```bash
+cd program && cargo build-sbf          # -> target/deploy/arbitrage_program.so
+cargo test -p arbitrage-program        # acceptance contract (needs the two .so in tests/fixtures)
+```
+
+**Rust-only migration status:** Phases A + B + C(partial) + E done.
 - `common/` — frozen instruction ABI + opportunity JSON types (program
   parses, executor encodes, monitor produces; one definition, no drift).
 - `monitor/` — full Rust price monitor: Yellowstone Geyser gRPC (client

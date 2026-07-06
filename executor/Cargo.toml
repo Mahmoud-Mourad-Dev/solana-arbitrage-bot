@@ -6,7 +6,6 @@ description = "Off-chain execution bot: Redis opportunity listener -> Jito bundl
 
 [dependencies]
 arb-common = { path = "../common" }
-arbitrage-program = { path = "../program", features = ["no-entrypoint"] }
 base64 = "0.22"
 anyhow = "1"
 thiserror = "1"

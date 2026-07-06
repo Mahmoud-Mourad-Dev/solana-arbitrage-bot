@@ -1,4 +1,4 @@
-//! Atomic cyclic-arbitrage execution program.
+//! Atomic cyclic-arbitrage execution program — Pinocchio (no_std) build.
 //!
 //! Receives an ordered list of swap hops (Raydium AMM v4 / Orca Whirlpool),
 //! executes them via CPI, and enforces the profit constraint:
@@ -11,9 +11,11 @@
 //! otherwise the whole transaction reverts — zero inventory risk, and any
 //! in-transaction Jito tip reverts with it.
 //!
-//! The instruction byte layout and account ordering are defined ONCE in
-//! `arb-common` (`arb_common::ix`) and shared verbatim with the off-chain
-//! executor. See that module for the full ABI documentation.
+//! The instruction byte layout, account ordering and custom error codes are
+//! defined ONCE in `arb-common` (`arb_common::ix`) and shared verbatim with
+//! the off-chain executor — the ABI is unchanged from the previous
+//! `solana-program` build. This module is a behaviour-preserving port to
+//! Pinocchio: no Anchor, no `solana-program`, `no_std` on-chain.
 //!
 //! ## Account order
 //!
@@ -27,44 +29,56 @@
 //! Hops after the first swap the FULL balance of their source account, so
 //! intermediate legs never strand tokens (intermediate ATAs start empty).
 
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{AccountMeta, Instruction},
-    program::invoke,
-    program_error::ProgramError,
-    pubkey,
-    pubkey::Pubkey,
+#![cfg_attr(target_os = "solana", no_std)]
+
+extern crate alloc;
+
+use alloc::vec::Vec;
+
+use arb_common::ix::{
+    build_raydium_swap_data, build_whirlpool_swap_data, parse_instruction, ArbError, DexKind,
+    RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID, WHIRLPOOL_PROGRAM_ID,
 };
+use pinocchio::account::AccountView;
+use pinocchio::address::Address;
+use pinocchio::cpi::{invoke_signed_with_slice, Signer};
+use pinocchio::error::{ProgramError, ProgramResult};
+use pinocchio::instruction::{InstructionAccount, InstructionView};
 
-// Re-export the frozen ABI so existing downstream imports keep working.
-pub use arb_common::ix::*;
+// Program ids built from arb-common's canonical bytes (single source of
+// truth, base58-guarded there) — no base58 decoder needed on-chain.
+pub const RAYDIUM_V4_PROGRAM: Address = Address::new_from_array(RAYDIUM_V4_PROGRAM_ID);
+pub const WHIRLPOOL_PROGRAM: Address = Address::new_from_array(WHIRLPOOL_PROGRAM_ID);
+pub const TOKEN_PROGRAM: Address = Address::new_from_array(TOKEN_PROGRAM_ID);
 
-#[cfg(not(feature = "no-entrypoint"))]
-solana_program::entrypoint!(process_instruction);
+// On-chain entrypoint only. We install the pieces explicitly rather than via
+// `entrypoint!` because that macro's `default_panic_handler!` assumes a
+// std-linked toolchain; this crate is genuinely `no_std` on-chain, so it uses
+// `nostd_panic_handler!` (a real `#[panic_handler]`) plus the bump allocator
+// (needed for the swap-data / CPI-metas Vecs).
+#[cfg(all(target_os = "solana", not(feature = "no-entrypoint")))]
+mod program_entry {
+    pinocchio::program_entrypoint!(super::process_instruction);
+    pinocchio::default_allocator!();
+    pinocchio::nostd_panic_handler!();
+}
 
-pub const RAYDIUM_V4_PROGRAM: Pubkey = pubkey!("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
-pub const WHIRLPOOL_PROGRAM: Pubkey = pubkey!("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
-pub const TOKEN_PROGRAM: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-
-/// `ArbError` lives in arb-common (no solana deps there), so the orphan
-/// rule forbids `impl From` — a plain mapping fn keeps call sites terse.
-#[inline]
-fn arb_err(e: ArbError) -> ProgramError {
+#[inline(always)]
+fn err(e: ArbError) -> ProgramError {
     ProgramError::Custom(e as u32)
 }
 
 /// Read the `amount` field of an SPL token account with ownership checks.
 #[inline]
-fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
-    if account.owner != &TOKEN_PROGRAM {
-        return Err(arb_err(ArbError::InvalidTokenAccount));
+fn token_amount(account: &AccountView) -> Result<u64, ProgramError> {
+    if !account.owned_by(&TOKEN_PROGRAM) {
+        return Err(err(ArbError::InvalidTokenAccount));
     }
     let data = account
-        .try_borrow_data()
-        .map_err(|_| arb_err(ArbError::InvalidTokenAccount))?;
+        .try_borrow()
+        .map_err(|_| err(ArbError::InvalidTokenAccount))?;
     if data.len() < 72 {
-        return Err(arb_err(ArbError::InvalidTokenAccount));
+        return Err(err(ArbError::InvalidTokenAccount));
     }
     Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }
@@ -72,46 +86,51 @@ fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
 /// The base account must be a token account whose `owner` field is the
 /// transaction authority — prevents checking profit against a foreign
 /// account.
-fn check_user_token_account(account: &AccountInfo, authority: &Pubkey) -> Result<(), ProgramError> {
-    if account.owner != &TOKEN_PROGRAM {
-        return Err(arb_err(ArbError::InvalidTokenAccount));
+fn check_user_token_account(
+    account: &AccountView,
+    authority: &Address,
+) -> Result<(), ProgramError> {
+    if !account.owned_by(&TOKEN_PROGRAM) {
+        return Err(err(ArbError::InvalidTokenAccount));
     }
     let data = account
-        .try_borrow_data()
-        .map_err(|_| arb_err(ArbError::InvalidTokenAccount))?;
+        .try_borrow()
+        .map_err(|_| err(ArbError::InvalidTokenAccount))?;
     if data.len() < 72 {
-        return Err(arb_err(ArbError::InvalidTokenAccount));
+        return Err(err(ArbError::InvalidTokenAccount));
     }
-    if data[32..64] != authority.to_bytes() {
-        return Err(arb_err(ArbError::TokenAccountOwnerMismatch));
+    if data[32..64] != authority.as_array()[..] {
+        return Err(err(ArbError::TokenAccountOwnerMismatch));
     }
     Ok(())
 }
 
 pub fn process_instruction(
-    _program_id: &Pubkey,
-    accounts: &[AccountInfo],
+    _program_id: &Address,
+    accounts: &mut [AccountView],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    let params = parse_instruction(instruction_data).map_err(arb_err)?;
+    let params = parse_instruction(instruction_data).map_err(err)?;
 
+    let accounts: &[AccountView] = accounts;
     let (authority, base_token, hop_accounts) = match accounts {
         [authority, base_token, rest @ ..] => (authority, base_token, rest),
         _ => return Err(ProgramError::NotEnoughAccountKeys),
     };
-    if !authority.is_signer {
-        return Err(arb_err(ArbError::MissingSignature));
+    if !authority.is_signer() {
+        return Err(err(ArbError::MissingSignature));
     }
-    check_user_token_account(base_token, authority.key)?;
+    check_user_token_account(base_token, authority.address())?;
 
     let starting_balance = token_amount(base_token)?;
 
+    let no_signers: &[Signer] = &[];
     let mut cursor = 0usize;
     for (hop_index, hop) in params.hops.iter().enumerate() {
         let n = hop.num_accounts as usize;
         let slice = hop_accounts
             .get(cursor..cursor + n)
-            .ok_or(arb_err(ArbError::AccountSliceOutOfBounds))?;
+            .ok_or(err(ArbError::AccountSliceOutOfBounds))?;
         cursor += n;
 
         let dex_program = &slice[0];
@@ -119,8 +138,8 @@ pub fn process_instruction(
             DexKind::RaydiumV4 => &RAYDIUM_V4_PROGRAM,
             DexKind::OrcaWhirlpool => &WHIRLPOOL_PROGRAM,
         };
-        if dex_program.key != expected || !dex_program.executable {
-            return Err(arb_err(ArbError::InvalidDexProgram));
+        if dex_program.address() != expected || !dex_program.executable() {
+            return Err(err(ArbError::InvalidDexProgram));
         }
 
         // First hop trades the caller-specified size; later hops sweep the
@@ -131,7 +150,7 @@ pub fn process_instruction(
             token_amount(&slice[hop.source_index as usize])?
         };
         if amount_in == 0 {
-            return Err(arb_err(ArbError::ZeroAmount));
+            return Err(err(ArbError::ZeroAmount));
         }
 
         let data = match hop.dex {
@@ -140,35 +159,35 @@ pub fn process_instruction(
                 build_whirlpool_swap_data(amount_in, hop.min_amount_out, hop.a_to_b)
             }
         };
-        // Privileges are inherited verbatim from the outer transaction.
-        let metas: Vec<AccountMeta> = slice[1..]
-            .iter()
-            .map(|a| AccountMeta {
-                pubkey: *a.key,
-                is_signer: a.is_signer,
-                is_writable: a.is_writable,
-            })
-            .collect();
-        invoke(
-            &Instruction {
-                program_id: *dex_program.key,
-                accounts: metas,
-                data,
-            },
-            slice,
-        )?;
+
+        // Privileges inherited verbatim from the outer transaction.
+        let cpi_accounts = &slice[1..];
+        let mut metas: Vec<InstructionAccount> = Vec::with_capacity(cpi_accounts.len());
+        for a in cpi_accounts {
+            metas.push(InstructionAccount::new(
+                a.address(),
+                a.is_writable(),
+                a.is_signer(),
+            ));
+        }
+        let ix = InstructionView {
+            program_id: dex_program.address(),
+            data: &data,
+            accounts: &metas,
+        };
+        invoke_signed_with_slice(&ix, cpi_accounts, no_signers)?;
     }
     if cursor != hop_accounts.len() {
         // Trailing unconsumed accounts signal a malformed client — refuse.
-        return Err(arb_err(ArbError::AccountSliceOutOfBounds));
+        return Err(err(ArbError::AccountSliceOutOfBounds));
     }
 
     let final_balance = token_amount(base_token)?;
     let required = starting_balance
         .checked_add(params.min_profit)
-        .ok_or(arb_err(ArbError::ArithmeticOverflow))?;
+        .ok_or(err(ArbError::ArithmeticOverflow))?;
     if final_balance < required {
-        return Err(arb_err(ArbError::ProfitNotMet));
+        return Err(err(ArbError::ProfitNotMet));
     }
     Ok(())
 }
@@ -177,12 +196,12 @@ pub fn process_instruction(
 mod tests {
     use super::*;
 
-    /// The on-chain constants must match the base58 strings frozen in
-    /// arb-common (which the executor uses to build its Pubkeys).
+    /// The Address constants must equal the canonical arb-common bytes (which
+    /// are themselves base58-guarded in arb-common's own test suite).
     #[test]
     fn program_ids_match_common() {
-        assert_eq!(RAYDIUM_V4_PROGRAM.to_string(), RAYDIUM_V4_PROGRAM_STR);
-        assert_eq!(WHIRLPOOL_PROGRAM.to_string(), WHIRLPOOL_PROGRAM_STR);
-        assert_eq!(TOKEN_PROGRAM.to_string(), TOKEN_PROGRAM_STR);
+        assert_eq!(RAYDIUM_V4_PROGRAM.as_array(), &RAYDIUM_V4_PROGRAM_ID);
+        assert_eq!(WHIRLPOOL_PROGRAM.as_array(), &WHIRLPOOL_PROGRAM_ID);
+        assert_eq!(TOKEN_PROGRAM.as_array(), &TOKEN_PROGRAM_ID);
     }
 }
