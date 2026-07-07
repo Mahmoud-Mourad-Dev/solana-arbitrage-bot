@@ -73,7 +73,7 @@ disarmed by default: real bundles require `DRY_RUN=false` **and**
 cargo run -p arb-monitor    # Rust monitor (reads the same .env + pools.json)
 ```
 
-### Differential parity (Phase B validation)
+### Differential parity (offline)
 
 `validation/` proves the Rust engine emits the **same opportunities** as the
 TypeScript engine. One fixture file (`scenarios.json`) is fed to both
@@ -81,6 +81,30 @@ TypeScript engine. One fixture file (`scenarios.json`) is fed to both
 net profit, bps and slot is identical (key order / int-vs-float ignored).
 Covers a 2-hop arb, a 3-hop cycle, and gating cases (drained pool,
 waiting-trade status). Fully offline — no Geyser/Redis needed.
+
+```bash
+npm run verify:parity        # deterministic, offline
+```
+
+### Live side-by-side parity
+
+`validation/live/` runs the TypeScript and Rust monitors against the **same
+live Geyser feed + pools.json**, each publishing to a distinct Redis channel.
+A correlator subscribes to both and matches opportunities by `(id, slot)` —
+when both engines emit the same cycle id at the same slot they observed
+identical on-chain state, so every amount/profit/leg **must** match; any
+divergence there is a real bug. One-sided emissions (independent stream
+timing / per-engine cooldown) are reported separately. Neither monitor
+submits anything — they only read chain state and publish.
+
+```bash
+npm run parity:selftest      # offline: verify the correlator logic
+npm run verify:parity:live   # live: needs GEYSER_ENDPOINT + reachable Redis in .env
+#   bash validation/live/run-live.sh 120   # auto-stop after 120s
+```
+
+Exit code is non-zero if any divergence was seen — CI-friendly. Per-monitor
+output goes to `validation/live/{ts,rs}-monitor.log`.
 
 ```bash
 npm run verify:parity   # build TS + run both engines + compare

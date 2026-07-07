@@ -10,7 +10,9 @@
     "dev": "tsx src/price-monitor.ts",
     "selftest": "tsx src/selftest.ts",
     "verify:layouts": "tsx scripts/verify-layouts.ts",
-    "verify:parity": "bash validation/run-parity.sh"
+    "verify:parity": "bash validation/run-parity.sh",
+    "verify:parity:live": "bash validation/live/run-live.sh",
+    "parity:selftest": "node validation/live/compare-live.mjs --selftest"
   },
   "engines": {
     "node": ">=18"
