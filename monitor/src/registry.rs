@@ -104,6 +104,29 @@ impl PoolRegistry {
         self.tick_array_to_pool.keys().copied().collect()
     }
 
+    /// Re-derive the ±2 tick arrays around each whirlpool's CURRENT tick and
+    /// return the full address set to (re)fetch. Bounded: clears and rebuilds
+    /// so a long run tracking a moving price never grows unbounded. Call
+    /// periodically so exact quotes keep valid coverage as prices drift.
+    pub fn rebuild_whirlpool_tick_arrays(&mut self) -> Vec<Pubkey> {
+        self.tick_array_to_pool.clear();
+        let whs: Vec<(Pubkey, i32, u16)> = self
+            .pools
+            .iter()
+            .filter_map(|(a, p)| match p {
+                PoolState::Whirlpool(w) => Some((*a, w.tick_current_index, w.tick_spacing)),
+                _ => None,
+            })
+            .collect();
+        for (addr, tick, spacing) in whs {
+            for start in tick_array_starts_around(tick, spacing) {
+                self.tick_array_to_pool
+                    .insert(tick_array_pda(&addr, start), (addr, start));
+            }
+        }
+        self.tick_array_accounts()
+    }
+
     /// Freshest ready pool connecting two mints (gas-cost conversion).
     pub fn find_reference_pool(&self, mint_x: &Pubkey, mint_y: &Pubkey) -> Option<&PoolState> {
         let mut best: Option<&PoolState> = None;

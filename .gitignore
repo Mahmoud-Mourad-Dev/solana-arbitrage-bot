@@ -9,3 +9,4 @@ validation/out-rs.json
 # generated pool sets (discover-pools output)
 pools.generated.json
 pools.[0-9]*.json
+preview-report.json

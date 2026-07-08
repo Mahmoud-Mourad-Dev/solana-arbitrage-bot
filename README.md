@@ -136,7 +136,23 @@ RPC_ENDPOINT=https://api.mainnet-beta.solana.com \
 
 It hydrates every pool from chain, builds the cycle index, then every few
 seconds re-polls and re-runs discovery, logging any profitable cycle with
-its route and economics. Use it to decide: if cycles show up here (at slow
+its route and economics.
+
+**Multi-hour runs** auto-stop and write a cumulative report:
+
+```bash
+# 6 hours on a PRIVATE RPC (public one rate-limits across hours), then report
+RPC_ENDPOINT=<your-private-rpc> POOLS_FILE=pools.generated.json \
+  PREVIEW_DURATION_SECS=21600 PREVIEW_POLL_INTERVAL_MS=3000 \
+  cargo run --release -p arb-monitor --bin preview
+```
+
+The report (stdout + `preview-report.json`) covers runtime, poll
+success rate, whirlpool quote health, unique cycles seen, most-persistent
+cycles (a long-lived one is a quirk to investigate, not a repeatable
+profit), best net profit, and hourly opportunity counts. Tick-array coverage
+is refreshed every `PREVIEW_TICK_REFRESH_SECS` so exact quotes stay valid as
+prices drift. Ctrl-C also finalizes the report. Use it to decide: if cycles show up here (at slow
 poll latency), Geyser will catch far more; if nothing ever appears, your
 pool set needs work first — add more pools that **share tokens** (more edges
 = more cycle paths) and less efficient / more volatile pairs, since deep
