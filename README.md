@@ -138,10 +138,28 @@ It hydrates every pool from chain, builds the cycle index, then every few
 seconds re-polls and re-runs discovery, logging any profitable cycle with
 its route and economics.
 
+#### Private RPC (required for multi-hour runs)
+
+A rich pool set watches hundreds of accounts per poll; the public
+`api.mainnet-beta.solana.com` endpoint will rate-limit that across hours.
+Use a free-tier private RPC — any of these work, no payment needed:
+
+| Provider | Get a URL | Free tier |
+|---|---|---|
+| Helius | dashboard.helius.dev → create API key | ~generous; `https://mainnet.helius-rpc.com/?api-key=<KEY>` |
+| QuickNode | quicknode.com → create Solana mainnet endpoint | free plan; copyable HTTPS URL |
+| Triton (RPC Pool) | triton.one | free tier; `https://<you>.rpcpool.com/<token>` |
+| Alchemy | alchemy.com → Solana app | free plan; `https://solana-mainnet.g.alchemy.com/v2/<KEY>` |
+
+Put it in `.env` as `RPC_ENDPOINT=...` (the same key you'll later reuse for
+bootstrap). These are HTTP RPC endpoints and are unrelated to the paid
+**Geyser** subscription — this is exactly the point of the preview: prove the
+edge exists on a free RPC before paying for Geyser streaming.
+
 **Multi-hour runs** auto-stop and write a cumulative report:
 
 ```bash
-# 6 hours on a PRIVATE RPC (public one rate-limits across hours), then report
+# 6 hours on a PRIVATE RPC, then report
 RPC_ENDPOINT=<your-private-rpc> POOLS_FILE=pools.generated.json \
   PREVIEW_DURATION_SECS=21600 PREVIEW_POLL_INTERVAL_MS=3000 \
   cargo run --release -p arb-monitor --bin preview
