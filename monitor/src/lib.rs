@@ -19,4 +19,5 @@ pub mod pipeline;
 pub mod quote;
 pub mod redis_sink;
 pub mod registry;
+pub mod tick_math;
 pub mod types;

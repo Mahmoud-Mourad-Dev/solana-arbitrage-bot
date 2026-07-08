@@ -116,6 +116,7 @@ pub async fn bootstrap_registry(cfg: &MonitorConfig, registry: &mut PoolRegistry
                     tick_current_index: d.tick_current_index,
                     tick_spacing: d.tick_spacing,
                     fee_rate_ppm: d.fee_rate_ppm,
+                    tick_arrays: std::collections::HashMap::new(),
                 }));
             }
         }
@@ -190,5 +191,45 @@ pub async fn bootstrap_registry(cfg: &MonitorConfig, registry: &mut PoolRegistry
     if registry.pools.is_empty() {
         bail!("bootstrap produced zero usable pools — check pools.json / RPC endpoint");
     }
+
+    // Third pass: fetch the whirlpool tick arrays (registered by add_pool) so
+    // the exact CLMM quote has liquidity to walk.
+    let tick_accounts = registry.tick_array_accounts();
+    if !tick_accounts.is_empty() {
+        let fetched = get_accounts_batched(&rpc, &tick_accounts).await?;
+        // Slot 0 so later real-slot poll/stream updates are still accepted.
+        let mut applied = 0usize;
+        for (addr, data) in &fetched {
+            if registry.apply_account_update(*addr, data, 0).is_some() {
+                applied += 1;
+            }
+        }
+        info!(
+            requested = tick_accounts.len(),
+            found = fetched.len(),
+            applied,
+            "tick arrays hydrated"
+        );
+        // Warn about any whirlpool that ended up with no usable tick data —
+        // its exact quotes will be rejected (never estimated).
+        for pool in registry.pools.values() {
+            if let PoolState::Whirlpool(w) = pool {
+                let initialized: usize = w
+                    .tick_arrays
+                    .values()
+                    .map(|ticks| ticks.iter().filter(|t| t.initialized).count())
+                    .sum();
+                if w.tick_arrays.is_empty() || initialized == 0 {
+                    warn!(
+                        pool = %w.common.label.clone().unwrap_or_else(|| w.common.address.to_string()),
+                        arrays = w.tick_arrays.len(),
+                        initialized_ticks = initialized,
+                        "whirlpool has no usable tick liquidity — exact quotes will be REJECTED"
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }

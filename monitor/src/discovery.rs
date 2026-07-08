@@ -350,6 +350,183 @@ mod tests {
         assert_eq!(route_key(&[a, b]), format!("{a}>{b}"));
     }
 
+    /// Build a tick array (88 ticks) with the given initialized ticks.
+    fn tick_array_with(
+        start: i32,
+        spacing: u16,
+        inits: &[(i32, i128)],
+    ) -> Vec<crate::parsers::TickInfo> {
+        let mut ticks = vec![
+            crate::parsers::TickInfo {
+                initialized: false,
+                liquidity_net: 0
+            };
+            crate::parsers::TICKS_PER_ARRAY
+        ];
+        for &(tick, net) in inits {
+            let idx = ((tick - start) / spacing as i32) as usize;
+            if idx < crate::parsers::TICKS_PER_ARRAY {
+                ticks[idx] = crate::parsers::TickInfo {
+                    initialized: true,
+                    liquidity_net: net,
+                };
+            }
+        }
+        ticks
+    }
+
+    /// REGRESSION for the live WBTC/JLP false positive: a Whirlpool whose
+    /// *current-tick* price looks arbitrageable but has THIN liquidity and a
+    /// tick just past it that removes nearly all depth. The old single-tick
+    /// approximation (deep-liquidity assumption) called this a ~3% profit;
+    /// exact tick-array quoting can't fill through it and produces NO
+    /// opportunity.
+    #[test]
+    fn thin_whirlpool_phantom_rejected_by_exact_quoting() {
+        use crate::config::MonitorConfig;
+        use crate::types::{
+            tick_array_start, tick_array_starts_around, PoolCommon, PoolState, RaydiumPool,
+            WhirlpoolPool,
+        };
+        use std::collections::HashMap;
+
+        let wsol: Pubkey = WSOL_MINT_STR.parse().unwrap();
+        let usdc: Pubkey = crate::config::USDC_MINT_STR.parse().unwrap();
+        let ray_addr = Pubkey::new_unique();
+        let orca_addr = Pubkey::new_unique();
+        let spacing = 64u16;
+        let cur_tick = -25_130; // price ~0.153 raw (≈153 USDC/SOL)
+
+        let make_orca = |liquidity: u128, thin: bool| -> WhirlpoolPool {
+            let mut arrays: HashMap<i32, Vec<crate::parsers::TickInfo>> = HashMap::new();
+            let killer_tick = tick_array_start(cur_tick, spacing)
+                + ((cur_tick - tick_array_start(cur_tick, spacing)) / spacing as i32 - 1)
+                    * spacing as i32;
+            for start in tick_array_starts_around(cur_tick, spacing) {
+                // In the thin pool, the array holding the killer tick removes
+                // all liquidity a hair below the current price.
+                let inits: &[(i32, i128)] = if thin && start == tick_array_start(cur_tick, spacing)
+                {
+                    &[(killer_tick, liquidity as i128)] // a_to_b subtracts -> liq 0
+                } else {
+                    &[]
+                };
+                arrays.insert(start, tick_array_with(start, spacing, inits));
+            }
+            WhirlpoolPool {
+                common: PoolCommon {
+                    address: orca_addr,
+                    label: None,
+                    mint_a: wsol,
+                    mint_b: usdc,
+                    vault_a: Pubkey::new_unique(),
+                    vault_b: Pubkey::new_unique(),
+                    decimals_a: 9,
+                    decimals_b: 6,
+                    last_slot: 1,
+                    last_updated_ms: now_ms(),
+                    ready: true,
+                },
+                sqrt_price_x64: 7_216_072_408_257_405_000,
+                liquidity,
+                tick_current_index: cur_tick,
+                tick_spacing: spacing,
+                fee_rate_ppm: 3_000,
+                tick_arrays: arrays,
+            }
+        };
+
+        let make_ray = || {
+            PoolState::Raydium(RaydiumPool {
+                common: PoolCommon {
+                    address: ray_addr,
+                    label: None,
+                    mint_a: wsol,
+                    mint_b: usdc,
+                    vault_a: Pubkey::new_unique(),
+                    vault_b: Pubkey::new_unique(),
+                    decimals_a: 9,
+                    decimals_b: 6,
+                    last_slot: 1,
+                    last_updated_ms: now_ms(),
+                    ready: true,
+                },
+                vault_a_balance: 5_000 * 10u64.pow(9),
+                vault_b_balance: 750_000 * 10u64.pow(6), // price 150
+                open_orders: Pubkey::new_unique(),
+                open_orders_base_total: 0,
+                open_orders_quote_total: 0,
+                base_need_take_pnl: 0,
+                quote_need_take_pnl: 0,
+                swap_fee_numerator: 25,
+                swap_fee_denominator: 10_000,
+                status: 6,
+                pool_open_time: 0,
+            })
+        };
+
+        let mut bounds = HashMap::new();
+        bounds.insert(wsol, (50_000_000u64, 10_000_000_000u64));
+        let cfg = MonitorConfig {
+            geyser_endpoint: String::new(),
+            geyser_x_token: None,
+            rpc_endpoint: String::new(),
+            redis_url: String::new(),
+            opportunity_channel: String::new(),
+            opportunity_list: String::new(),
+            opportunity_list_max: 1000,
+            base_mints: vec![wsol],
+            max_hops: 4,
+            min_profit_bps: 5,
+            slippage_bps: 20,
+            max_clmm_impact_bps: 100,
+            trade_bounds: bounds,
+            base_signature_fee_lamports: 5_000,
+            priority_fee_lamports: 100_000,
+            jito_tip_lamports: 1_000_000,
+            opportunity_cooldown_ms: 500,
+            pools: vec![],
+        };
+
+        // THIN pool with a killer tick → exact quoting must find NO cycle.
+        {
+            let mut reg = PoolRegistry::new();
+            reg.register_token(wsol, 9);
+            reg.register_token(usdc, 6);
+            reg.add_pool(make_ray());
+            reg.add_pool(PoolState::Whirlpool(make_orca(1_000_000_000, true)));
+            let mut engine = DiscoveryEngine::new(cfg.opportunity_cooldown_ms);
+            engine.build_cycle_index(&reg, &cfg);
+            engine.mark_dirty(ray_addr);
+            engine.mark_dirty(orca_addr);
+            let opps = engine.run_search(&reg, &cfg);
+            assert!(
+                opps.is_empty(),
+                "exact quoting must reject the thin-pool phantom, got: {opps:?}"
+            );
+        }
+
+        // CONTROL: same 2% gap but DEEP liquidity + no killer tick → a real
+        // cycle IS found. Proves the rejection above is due to tick liquidity,
+        // not the test setup.
+        {
+            let mut reg = PoolRegistry::new();
+            reg.register_token(wsol, 9);
+            reg.register_token(usdc, 6);
+            reg.add_pool(make_ray());
+            reg.add_pool(PoolState::Whirlpool(make_orca(10u128.pow(16), false)));
+            let mut engine = DiscoveryEngine::new(cfg.opportunity_cooldown_ms);
+            engine.build_cycle_index(&reg, &cfg);
+            engine.mark_dirty(ray_addr);
+            engine.mark_dirty(orca_addr);
+            let opps = engine.run_search(&reg, &cfg);
+            assert!(
+                !opps.is_empty(),
+                "deep-liquidity control should still find the real 2% cycle"
+            );
+        }
+    }
+
     /// End-to-end parity with the TS `npm run selftest`: two SOL/USDC venues
     /// with a deliberate ~2% price gap (Raydium 150, Orca ~153). The engine
     /// must find the cycle, pick the profitable direction (buy USDC where SOL
@@ -414,9 +591,24 @@ mod tests {
             },
             sqrt_price_x64: 7_216_072_408_257_405_000,
             liquidity: 10u128.pow(16),
-            tick_current_index: 0,
+            tick_current_index: -25_130,
             tick_spacing: 64,
             fee_rate_ppm: 3_000,
+            // Deep uniform liquidity around the current tick → no crossings,
+            // exact quote reduces to the single-tick form used by the TS test.
+            tick_arrays: {
+                let empty = vec![
+                    crate::parsers::TickInfo {
+                        initialized: false,
+                        liquidity_net: 0
+                    };
+                    crate::parsers::TICKS_PER_ARRAY
+                ];
+                crate::types::tick_array_starts_around(-25_130, 64)
+                    .into_iter()
+                    .map(|s| (s, empty.clone()))
+                    .collect()
+            },
         }));
 
         let mut bounds = HashMap::new();

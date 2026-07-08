@@ -104,17 +104,22 @@ Observed scaling (base = SOL/USDC, ≤3 hops): 25→74 routes, 50→224,
 `DISCOVER_MAX_TVL_USD`, `DISCOVER_MIN_VOL24H_USD`, `DISCOVER_MAX_POOLS`,
 `DISCOVER_MAX_HOPS`, `POOLS_OUT`.
 
-> ⚠️ **Preview candidates on CLMM pools are not trustworthy yet.** On a rich
-> set the preview surfaces cycles, but the Whirlpool quote uses a
-> *single-tick approximation* (see `math.rs` `TODO(whirlpool-exact)`). On
-> thin / concentrated-liquidity pools the optimizer can size a trade that
-> stays under the per-leg impact guard yet would cross ticks on-chain,
-> producing a **phantom, persistent** edge (e.g. a stable ~3% triangle
-> pivoting on one low-liquidity pool). Real arbitrage never persists like
-> that. Before trusting any candidate: (1) implement exact tick-array
-> Whirlpool quoting, and/or (2) validate with on-chain `simulateTransaction`
-> (the executor's dry-run). Treat preview output as *"the graph is rich
-> enough to search,"* not *"these are real profits."*
+**Whirlpool quotes are exact (tick-array aware).** `tick_math.rs` steps the
+swap through initialized ticks, crossing `liquidity_net` at each boundary,
+exactly as the Whirlpool program does — conservative (inputs round up,
+outputs down; rejects rather than estimates when tick data is missing or the
+swap would exceed loaded coverage). This removed the single-tick
+phantom-profit class: the previously persistent ~3% WBTC/JLP triangle no
+longer appears. The `sqrt_price_from_tick` constants are validated against
+live on-chain `(tick, sqrtPrice)` pairs, and a regression test asserts a
+thin-pool phantom that the old approximation "profited" now yields no
+opportunity. Bootstrap fetches ±2 tick arrays per whirlpool per direction and
+logs any pool with no usable tick liquidity (its quotes are rejected).
+
+> Note: with exact quoting the preview correctly shows **no** persistent
+> edges on efficient pools at poll latency — real cyclic arb is sub-second.
+> A surfaced candidate is now exact-math-validated, but still needs on-chain
+> `simulateTransaction` + low-latency (Geyser) execution to actually capture.
 
 ### Dry-run preview — no Geyser, no money
 

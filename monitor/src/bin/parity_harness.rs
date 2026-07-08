@@ -7,12 +7,36 @@
 
 use arb_monitor::config::MonitorConfig;
 use arb_monitor::discovery::DiscoveryEngine;
+use arb_monitor::parsers::{TickInfo, TICKS_PER_ARRAY};
 use arb_monitor::registry::PoolRegistry;
-use arb_monitor::types::{PoolCommon, PoolState, RaydiumPool, WhirlpoolPool};
+use arb_monitor::types::{
+    tick_array_starts_around, PoolCommon, PoolState, RaydiumPool, WhirlpoolPool,
+};
 use serde_json::{json, Map, Value};
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 use std::str::FromStr;
+
+/// Approximate tick index for a Q64.64 sqrt price (harness only).
+fn tick_from_sqrt(sqrt_price: u128) -> i32 {
+    let ratio = sqrt_price as f64 / (1u128 << 64) as f64;
+    (2.0 * ratio.ln() / 1.0001_f64.ln()).round() as i32
+}
+
+/// 5 empty tick arrays around `tick` — deep uniform liquidity, no crossings.
+fn uniform_tick_arrays(tick: i32, spacing: u16) -> HashMap<i32, Vec<TickInfo>> {
+    let empty = vec![
+        TickInfo {
+            initialized: false,
+            liquidity_net: 0
+        };
+        TICKS_PER_ARRAY
+    ];
+    tick_array_starts_around(tick, spacing)
+        .into_iter()
+        .map(|s| (s, empty.clone()))
+        .collect()
+}
 
 struct Fixtures {
     mints: HashMap<String, String>,
@@ -113,13 +137,19 @@ fn build_pool(f: &Fixtures, p: &Value) -> PoolState {
             pool_open_time: u64_field(p, "poolOpenTime"),
         })
     } else {
+        let sqrt = u128_field(p, "sqrtPriceX64");
+        let tick = tick_from_sqrt(sqrt);
         PoolState::Whirlpool(WhirlpoolPool {
             common,
-            sqrt_price_x64: u128_field(p, "sqrtPriceX64"),
+            sqrt_price_x64: sqrt,
             liquidity: u128_field(p, "liquidity"),
-            tick_current_index: 0,
+            tick_current_index: tick,
             tick_spacing: 64,
             fee_rate_ppm: p["feeRatePpm"].as_u64().unwrap(),
+            // Deep uniform liquidity: 5 empty tick arrays around the current
+            // tick → no crossings within the traded range → the exact quote
+            // reduces to the single-tick closed form, matching the TS engine.
+            tick_arrays: uniform_tick_arrays(tick, 64),
         })
     }
 }

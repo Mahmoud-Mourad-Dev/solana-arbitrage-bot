@@ -95,6 +95,47 @@ pub fn decode_whirlpool(d: &[u8]) -> Option<WhirlpoolDecoded> {
     })
 }
 
+/// Orca TickArray account (9988 bytes): discriminator(8) + start_tick_index
+/// i32(4) + 88 * Tick(113) + whirlpool pubkey(32). Each Tick:
+/// initialized(1) + liquidity_net i128(16) + liquidity_gross u128(16) +
+/// feeGrowthOutsideA/B u128(16 each) + rewardGrowthsOutside[3] u128(48).
+pub const TICK_ARRAY_ACCOUNT_SIZE: usize = 9988;
+pub const TICKS_PER_ARRAY: usize = 88;
+const TICK_SIZE: usize = 113;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TickInfo {
+    pub initialized: bool,
+    pub liquidity_net: i128,
+}
+
+#[derive(Debug, Clone)]
+pub struct TickArrayDecoded {
+    pub start_tick_index: i32,
+    pub ticks: Vec<TickInfo>, // length TICKS_PER_ARRAY
+}
+
+pub fn decode_tick_array(d: &[u8]) -> Option<TickArrayDecoded> {
+    if d.len() != TICK_ARRAY_ACCOUNT_SIZE {
+        return None;
+    }
+    let start_tick_index = i32::from_le_bytes(d[8..12].try_into().unwrap());
+    let mut ticks = Vec::with_capacity(TICKS_PER_ARRAY);
+    for i in 0..TICKS_PER_ARRAY {
+        let o = 12 + i * TICK_SIZE;
+        let initialized = d[o] != 0;
+        let liquidity_net = i128::from_le_bytes(d[o + 1..o + 17].try_into().unwrap());
+        ticks.push(TickInfo {
+            initialized,
+            liquidity_net,
+        });
+    }
+    Some(TickArrayDecoded {
+        start_tick_index,
+        ticks,
+    })
+}
+
 /// SPL token account: amount u64 LE at offset 64.
 pub fn decode_token_amount(d: &[u8]) -> Option<u64> {
     if d.len() < 72 {

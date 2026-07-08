@@ -3,9 +3,12 @@
 //! synchronous. Applies raw account updates by routing on pubkey.
 
 use crate::parsers::{
-    decode_open_orders_totals, decode_raydium_v4, decode_token_amount, decode_whirlpool,
+    decode_open_orders_totals, decode_raydium_v4, decode_tick_array, decode_token_amount,
+    decode_whirlpool,
 };
-use crate::types::{known_symbol, PoolState, Side, TokenNode};
+use crate::types::{
+    known_symbol, tick_array_pda, tick_array_starts_around, PoolState, Side, TokenNode,
+};
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
 
@@ -14,6 +17,8 @@ pub struct PoolRegistry {
     pub tokens: HashMap<Pubkey, TokenNode>,
     vault_to_pool: HashMap<Pubkey, (Pubkey, Side)>,
     open_orders_to_pool: HashMap<Pubkey, Pubkey>,
+    /// tick-array account -> (whirlpool, start_tick_index).
+    tick_array_to_pool: HashMap<Pubkey, (Pubkey, i32)>,
     /// mint -> pools touching it (graph adjacency).
     pub adjacency: HashMap<Pubkey, Vec<Pubkey>>,
     /// per-account last applied slot (drop out-of-order packets).
@@ -33,6 +38,7 @@ impl PoolRegistry {
             tokens: HashMap::new(),
             vault_to_pool: HashMap::new(),
             open_orders_to_pool: HashMap::new(),
+            tick_array_to_pool: HashMap::new(),
             adjacency: HashMap::new(),
             account_slots: HashMap::new(),
         }
@@ -56,6 +62,14 @@ impl PoolRegistry {
         if let PoolState::Raydium(p) = &state {
             self.open_orders_to_pool.insert(p.open_orders, addr);
         }
+        // Register the whirlpool's surrounding tick arrays so the exact quote
+        // has liquidity to walk. Addresses derived from the current tick.
+        if let PoolState::Whirlpool(w) = &state {
+            for start in tick_array_starts_around(w.tick_current_index, w.tick_spacing) {
+                let ta = tick_array_pda(&addr, start);
+                self.tick_array_to_pool.insert(ta, (addr, start));
+            }
+        }
         for mint in [mint_a, mint_b] {
             let list = self.adjacency.entry(mint).or_default();
             if !list.contains(&addr) {
@@ -77,9 +91,17 @@ impl PoolRegistry {
                 set.push(r.open_orders);
             }
         }
+        for ta in self.tick_array_to_pool.keys() {
+            set.push(*ta);
+        }
         set.sort();
         set.dedup();
         set
+    }
+
+    /// All tick-array account addresses (bootstrap fetches these).
+    pub fn tick_array_accounts(&self) -> Vec<Pubkey> {
+        self.tick_array_to_pool.keys().copied().collect()
     }
 
     /// Freshest ready pool connecting two mints (gas-cost conversion).
@@ -152,6 +174,18 @@ impl PoolRegistry {
                 r.open_orders_base_total = base;
                 r.open_orders_quote_total = quote;
                 Self::touch(&mut r.common, slot);
+                return Some(pool_addr);
+            }
+        }
+        if let Some((pool_addr, start)) = self.tick_array_to_pool.get(&pubkey).copied() {
+            let decoded = decode_tick_array(data)?;
+            let pool = self.pools.get_mut(&pool_addr)?;
+            if let PoolState::Whirlpool(w) = pool {
+                // Trust the account's own start index over the derived one.
+                w.tick_arrays
+                    .insert(decoded.start_tick_index, decoded.ticks);
+                let _ = start;
+                Self::touch(&mut w.common, slot);
                 return Some(pool_addr);
             }
         }

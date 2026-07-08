@@ -119,6 +119,34 @@ async fn main() -> Result<()> {
         info!(base = %sym, "cycle base token");
     }
 
+    // Whirlpool exact-quote health: how many can be quoted vs rejected for
+    // missing tick arrays / insufficient coverage. Rejections are dropped
+    // conservatively (never estimated) — this is what killed the phantoms.
+    {
+        use arb_monitor::quote::{quote_pool_detailed, QuoteOutcome};
+        use arb_monitor::types::PoolState;
+        let probe = 10u64.pow(9);
+        let (mut ok, mut missing, mut beyond) = (0u32, 0u32, 0u32);
+        for pool in registry.pools.values() {
+            if let PoolState::Whirlpool(w) = pool {
+                for mint in [w.common.mint_a, w.common.mint_b] {
+                    match quote_pool_detailed(pool, &mint, probe) {
+                        QuoteOutcome::Ok(_) => ok += 1,
+                        QuoteOutcome::WhirlpoolMissingTicks => missing += 1,
+                        QuoteOutcome::WhirlpoolBeyondCoverage => beyond += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        info!(
+            quotable = ok,
+            rejected_missing_ticks = missing,
+            rejected_beyond_coverage = beyond,
+            "whirlpool exact-quote health (probe 1 token)"
+        );
+    }
+
     let rpc =
         RpcClient::new_with_commitment(cfg.rpc_endpoint.clone(), CommitmentConfig::processed());
     let watched = registry.all_watched_accounts();
