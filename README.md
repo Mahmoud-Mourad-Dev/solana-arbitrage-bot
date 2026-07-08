@@ -86,6 +86,31 @@ waiting-trade status). Fully offline — no Geyser/Redis needed.
 npm run verify:parity        # deterministic, offline
 ```
 
+### Dry-run preview — no Geyser, no money
+
+Before paying for a Geyser subscription, find out whether your `pools.json`
+even produces profitable cycles. `arb-preview` runs the **exact same
+registry + discovery engine** as production, but sources pool state by
+polling plain **public RPC** instead of a Geyser stream — free, no keypair,
+no Redis, nothing ever submitted.
+
+```bash
+RPC_ENDPOINT=https://api.mainnet-beta.solana.com \
+  cargo run -p arb-monitor --bin preview
+```
+
+It hydrates every pool from chain, builds the cycle index, then every few
+seconds re-polls and re-runs discovery, logging any profitable cycle with
+its route and economics. Use it to decide: if cycles show up here (at slow
+poll latency), Geyser will catch far more; if nothing ever appears, your
+pool set needs work first — add more pools that **share tokens** (more edges
+= more cycle paths) and less efficient / more volatile pairs, since deep
+major pairs like SOL/USDC are arbitraged flat.
+
+Caveat: polling latency (seconds) means these are **not executable** — they
+would be stale and contested. It is a feasibility probe, not a trading loop.
+Quotes are conservative (single-tick CLMM, fees in), so real edge is ≥ shown.
+
 ### Live side-by-side parity
 
 `validation/live/` runs the TypeScript and Rust monitors against the **same
