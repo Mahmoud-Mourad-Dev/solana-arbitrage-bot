@@ -254,6 +254,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "redis",
+ "reqwest",
  "ruint",
  "serde",
  "serde_json",

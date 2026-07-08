@@ -86,6 +86,36 @@ waiting-trade status). Fully offline — no Geyser/Redis needed.
 npm run verify:parity        # deterministic, offline
 ```
 
+### Build a richer pool graph — `discover-pools`
+
+The 4 default pools form only 6 cycles. `discover-pools` fetches live
+Raydium AMM v4 + Orca Whirlpool listings, filters by liquidity/volume, and
+keeps only pools that can actually sit on a cycle anchored at a base mint
+(token appears in ≥2 pools, base-connected component; isolated/dead/drained
+pools dropped). Writes `pools.generated.json` (never touches `pools.json`).
+
+```bash
+DISCOVER_MAX_POOLS=100 cargo run -p arb-monitor --bin discover-pools
+POOLS_FILE=pools.generated.json cargo run -p arb-monitor --bin preview
+```
+
+Observed scaling (base = SOL/USDC, ≤3 hops): 25→74 routes, 50→224,
+100(→84 after prune)→674 routes. Env: `DISCOVER_MIN_TVL_USD`,
+`DISCOVER_MAX_TVL_USD`, `DISCOVER_MIN_VOL24H_USD`, `DISCOVER_MAX_POOLS`,
+`DISCOVER_MAX_HOPS`, `POOLS_OUT`.
+
+> ⚠️ **Preview candidates on CLMM pools are not trustworthy yet.** On a rich
+> set the preview surfaces cycles, but the Whirlpool quote uses a
+> *single-tick approximation* (see `math.rs` `TODO(whirlpool-exact)`). On
+> thin / concentrated-liquidity pools the optimizer can size a trade that
+> stays under the per-leg impact guard yet would cross ticks on-chain,
+> producing a **phantom, persistent** edge (e.g. a stable ~3% triangle
+> pivoting on one low-liquidity pool). Real arbitrage never persists like
+> that. Before trusting any candidate: (1) implement exact tick-array
+> Whirlpool quoting, and/or (2) validate with on-chain `simulateTransaction`
+> (the executor's dry-run). Treat preview output as *"the graph is rich
+> enough to search,"* not *"these are real profits."*
+
 ### Dry-run preview — no Geyser, no money
 
 Before paying for a Geyser subscription, find out whether your `pools.json`

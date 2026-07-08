@@ -113,7 +113,11 @@ impl MonitorConfig {
             ),
         );
 
-        let pools_path = env_str("POOLS_PATH", "pools.json");
+        // POOLS_FILE takes precedence over POOLS_PATH (both accepted).
+        let pools_path = match std::env::var("POOLS_FILE") {
+            Ok(v) if !v.is_empty() => v,
+            _ => env_str("POOLS_PATH", "pools.json"),
+        };
         let raw =
             std::fs::read_to_string(&pools_path).with_context(|| format!("read {pools_path}"))?;
         let pools_file: PoolsFile = serde_json::from_str(&raw).context("parse pools.json")?;

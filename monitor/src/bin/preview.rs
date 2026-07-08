@@ -70,8 +70,21 @@ async fn main() -> Result<()> {
         .init();
 
     // Geyser not required for the preview.
-    let cfg = MonitorConfig::from_env(false)?;
-    let interval = Duration::from_millis(env_u64("POLL_INTERVAL_MS", 3000));
+    let mut cfg = MonitorConfig::from_env(false)?;
+    // PREVIEW_* knobs override the shared config for feasibility runs.
+    let interval = Duration::from_millis(env_u64(
+        "PREVIEW_POLL_INTERVAL_MS",
+        env_u64("POLL_INTERVAL_MS", 3000),
+    ));
+    if let Ok(v) = std::env::var("PREVIEW_MIN_PROFIT_BPS") {
+        if let Ok(bps) = v.parse() {
+            cfg.min_profit_bps = bps;
+        }
+    }
+    let max_pools = env_u64("PREVIEW_MAX_POOLS", 0) as usize;
+    if max_pools > 0 && cfg.pools.len() > max_pools {
+        cfg.pools.truncate(max_pools);
+    }
 
     info!(
         pools = cfg.pools.len(),

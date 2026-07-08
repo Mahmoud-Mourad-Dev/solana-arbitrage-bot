@@ -22,7 +22,20 @@ solana-sdk = "2.1"
 solana-client = "2.1"
 yellowstone-grpc-client = "13"
 yellowstone-grpc-proto = "12"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 [[bin]]
 name = "arb-monitor"
 path = "src/main.rs"
+
+[[bin]]
+name = "preview"
+path = "src/bin/preview.rs"
+
+[[bin]]
+name = "discover-pools"
+path = "src/bin/discover_pools.rs"
+
+[[bin]]
+name = "parity_harness"
+path = "src/bin/parity_harness.rs"
