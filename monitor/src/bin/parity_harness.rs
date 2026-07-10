@@ -208,7 +208,7 @@ fn run_scenario(f: &Fixtures, scenario: &Value) -> Vec<Value> {
         engine.mark_dirty(f.addr(d.as_str().unwrap()));
     }
     let mut opps: Vec<Value> = engine
-        .run_search(&registry, &cfg)
+        .run_search(&registry, &cfg, None)
         .iter()
         .map(normalize)
         .collect();

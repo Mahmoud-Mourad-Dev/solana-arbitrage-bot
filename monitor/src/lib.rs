@@ -11,6 +11,7 @@
 
 pub mod bootstrap;
 pub mod config;
+pub mod consistency;
 pub mod discovery;
 pub mod geyser;
 pub mod math;

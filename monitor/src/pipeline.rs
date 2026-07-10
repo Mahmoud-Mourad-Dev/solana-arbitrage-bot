@@ -114,7 +114,7 @@ pub async fn run_pipeline(cfg: &MonitorConfig, mut sink: OpportunitySink) -> Res
         updates_received += 1;
         if let Some(pool) = registry.apply_account_update(pubkey, &acc.data, acc.slot) {
             if engine.mark_dirty(pool) {
-                for opp in engine.run_search(&registry, cfg) {
+                for opp in engine.run_search(&registry, cfg, None) {
                     info!(
                         id = %opp.id,
                         base = %opp.base_symbol.clone().unwrap_or_default(),

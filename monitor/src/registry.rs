@@ -104,6 +104,13 @@ impl PoolRegistry {
         self.tick_array_to_pool.keys().copied().collect()
     }
 
+    /// Forget per-account slot bookkeeping so the next fetch is accepted even
+    /// if it reports an older-looking slot. Used after a detected sleep/gap so
+    /// a full rehydration isn't blocked by pre-gap slot records.
+    pub fn reset_slot_tracking(&mut self) {
+        self.account_slots.clear();
+    }
+
     /// Re-derive the ±2 tick arrays around each whirlpool's CURRENT tick and
     /// return the full address set to (re)fetch. Bounded: clears and rebuilds
     /// so a long run tracking a moving price never grows unbounded. Call
@@ -314,6 +321,67 @@ mod tests {
 
         // out-of-order (older slot) is dropped.
         assert_eq!(reg.apply_account_update(va, &tok, 5), None);
+    }
+
+    /// REGRESSION (P0-1): the periodic tick-array refresh must never freeze
+    /// tick arrays. The old bug applied refreshed arrays stamped with a
+    /// wall-clock millisecond as the "slot" (~1.7e12), which poisoned
+    /// `account_slots` so every later real-slot (~4.3e8) update was rejected.
+    /// After the fix the refresh only re-registers PDAs (the main poll fetches
+    /// them with real slots), so subsequent real-slot updates keep applying.
+    #[test]
+    fn tick_refresh_does_not_freeze_tick_arrays() {
+        use crate::parsers::TICK_ARRAY_ACCOUNT_SIZE;
+        use crate::types::{tick_array_pda, PoolCommon, WhirlpoolPool};
+
+        let (addr, a, b, va, vb) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let mut reg = PoolRegistry::new();
+        reg.add_pool(PoolState::Whirlpool(WhirlpoolPool {
+            common: PoolCommon {
+                address: addr,
+                label: None,
+                mint_a: a,
+                mint_b: b,
+                vault_a: va,
+                vault_b: vb,
+                decimals_a: 9,
+                decimals_b: 6,
+                last_slot: 0,
+                last_updated_ms: 0,
+                ready: true,
+            },
+            sqrt_price_x64: 1u128 << 64,
+            liquidity: 10u128.pow(12),
+            tick_current_index: 0,
+            tick_spacing: 64,
+            fee_rate_ppm: 3000,
+            tick_arrays: std::collections::HashMap::new(),
+        }));
+
+        // A valid 9988-byte tick array with start_tick_index = 0.
+        let ta_addr = tick_array_pda(&addr, 0);
+        let mut buf = vec![0u8; TICK_ARRAY_ACCOUNT_SIZE];
+        buf[8..12].copy_from_slice(&0i32.to_le_bytes());
+
+        // First real-slot update applies.
+        assert_eq!(reg.apply_account_update(ta_addr, &buf, 100), Some(addr));
+
+        // The 5-minute refresh: re-registers PDAs, does NOT apply now_ms.
+        reg.rebuild_whirlpool_tick_arrays();
+
+        // A newer real-slot update must STILL apply (not frozen).
+        assert_eq!(
+            reg.apply_account_update(ta_addr, &buf, 101),
+            Some(addr),
+            "tick array frozen after refresh — P0-1 regression"
+        );
+        assert_eq!(reg.apply_account_update(ta_addr, &buf, 102), Some(addr));
     }
 
     #[test]

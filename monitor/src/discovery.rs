@@ -152,7 +152,18 @@ impl DiscoveryEngine {
     }
 
     /// Evaluate all routes touched by the dirty set; emit opportunities.
-    pub fn run_search(&mut self, registry: &PoolRegistry, cfg: &MonitorConfig) -> Vec<Opportunity> {
+    ///
+    /// `fresh_floor`: when `Some(slot)`, any cycle touching a pool whose
+    /// `last_slot < slot` is rejected — this is the freshness gate (P0-3) that
+    /// stops stale pool state (e.g. post-sleep, or a lagging chunk) from being
+    /// mixed with fresh pools to fabricate profit. `None` disables the gate
+    /// (Geyser streaming path, where per-account freshness is inherent).
+    pub fn run_search(
+        &mut self,
+        registry: &PoolRegistry,
+        cfg: &MonitorConfig,
+        fresh_floor: Option<u64>,
+    ) -> Vec<Opportunity> {
         if self.dirty.is_empty() {
             return Vec::new();
         }
@@ -168,7 +179,7 @@ impl DiscoveryEngine {
         for idx in candidates {
             self.stats.routes_evaluated += 1;
             let route = self.routes[idx].clone();
-            if let Some(opp) = self.evaluate_route(&route, registry, cfg) {
+            if let Some(opp) = self.evaluate_route(&route, registry, cfg, fresh_floor) {
                 if self.should_publish(&route, &opp) {
                     self.stats.opportunities += 1;
                     out.push(opp);
@@ -183,6 +194,7 @@ impl DiscoveryEngine {
         route: &CycleRoute,
         registry: &PoolRegistry,
         cfg: &MonitorConfig,
+        fresh_floor: Option<u64>,
     ) -> Option<Opportunity> {
         let now_sec = now_ms() / 1000;
         let mut max_slot = 0u64;
@@ -191,6 +203,12 @@ impl DiscoveryEngine {
             let p = registry.pools.get(addr)?;
             if !p.common().ready || !p.swap_enabled(now_sec) {
                 return None;
+            }
+            // Freshness gate: reject the whole cycle if any pool is stale.
+            if let Some(floor) = fresh_floor {
+                if p.common().last_slot < floor {
+                    return None;
+                }
             }
             max_slot = max_slot.max(p.common().last_slot);
             pools.push(p);
@@ -350,6 +368,107 @@ mod tests {
         assert_eq!(route_key(&[a, b]), format!("{a}>{b}"));
     }
 
+    /// REGRESSION (P0-3 / P0-2 / P0-4): the freshness gate must reject any
+    /// cycle that touches a stale pool. This is the enforcement that stops
+    /// mixed-slot chunks and post-sleep stale state from fabricating profit —
+    /// a stale pool priced against a fresh one is exactly the phantom class.
+    #[test]
+    fn freshness_gate_rejects_stale_pool_but_allows_all_fresh() {
+        use crate::config::MonitorConfig;
+        use crate::types::{PoolCommon, PoolState, RaydiumPool};
+        use std::collections::HashMap;
+
+        let wsol: Pubkey = WSOL_MINT_STR.parse().unwrap();
+        let usdc: Pubkey = crate::config::USDC_MINT_STR.parse().unwrap();
+        let p1 = Pubkey::new_unique(); // SOL/USDC @ 150
+        let p2 = Pubkey::new_unique(); // SOL/USDC @ 153 (the gap)
+
+        let ray = |addr: Pubkey, quote_reserve: u64, last_slot: u64| {
+            PoolState::Raydium(RaydiumPool {
+                common: PoolCommon {
+                    address: addr,
+                    label: None,
+                    mint_a: wsol,
+                    mint_b: usdc,
+                    vault_a: Pubkey::new_unique(),
+                    vault_b: Pubkey::new_unique(),
+                    decimals_a: 9,
+                    decimals_b: 6,
+                    last_slot,
+                    last_updated_ms: now_ms(),
+                    ready: true,
+                },
+                vault_a_balance: 5_000 * 10u64.pow(9),
+                vault_b_balance: quote_reserve,
+                open_orders: Pubkey::new_unique(),
+                open_orders_base_total: 0,
+                open_orders_quote_total: 0,
+                base_need_take_pnl: 0,
+                quote_need_take_pnl: 0,
+                swap_fee_numerator: 25,
+                swap_fee_denominator: 10_000,
+                status: 6,
+                pool_open_time: 0,
+            })
+        };
+
+        let mut bounds = HashMap::new();
+        bounds.insert(wsol, (50_000_000u64, 10_000_000_000u64));
+        let cfg = MonitorConfig {
+            geyser_endpoint: String::new(),
+            geyser_x_token: None,
+            rpc_endpoint: String::new(),
+            redis_url: String::new(),
+            opportunity_channel: String::new(),
+            opportunity_list: String::new(),
+            opportunity_list_max: 1000,
+            base_mints: vec![wsol],
+            max_hops: 4,
+            min_profit_bps: 5,
+            slippage_bps: 20,
+            max_clmm_impact_bps: 100,
+            trade_bounds: bounds,
+            base_signature_fee_lamports: 5_000,
+            priority_fee_lamports: 100_000,
+            jito_tip_lamports: 1_000_000,
+            opportunity_cooldown_ms: 500,
+            pools: vec![],
+        };
+
+        // Control: BOTH pools fresh (slot 200), floor 196 → cycle IS found.
+        {
+            let mut reg = PoolRegistry::new();
+            reg.register_token(wsol, 9);
+            reg.register_token(usdc, 6);
+            reg.add_pool(ray(p1, 750_000 * 10u64.pow(6), 200)); // 150
+            reg.add_pool(ray(p2, 765_000 * 10u64.pow(6), 200)); // 153
+            let mut engine = DiscoveryEngine::new(cfg.opportunity_cooldown_ms);
+            engine.build_cycle_index(&reg, &cfg);
+            engine.mark_dirty(p1);
+            engine.mark_dirty(p2);
+            let opps = engine.run_search(&reg, &cfg, Some(196));
+            assert!(!opps.is_empty(), "all-fresh control should find the cycle");
+        }
+
+        // One pool STALE (slot 100) with floor 196 → NO opportunity.
+        {
+            let mut reg = PoolRegistry::new();
+            reg.register_token(wsol, 9);
+            reg.register_token(usdc, 6);
+            reg.add_pool(ray(p1, 750_000 * 10u64.pow(6), 200)); // fresh
+            reg.add_pool(ray(p2, 765_000 * 10u64.pow(6), 100)); // STALE
+            let mut engine = DiscoveryEngine::new(cfg.opportunity_cooldown_ms);
+            engine.build_cycle_index(&reg, &cfg);
+            engine.mark_dirty(p1);
+            engine.mark_dirty(p2);
+            let opps = engine.run_search(&reg, &cfg, Some(196));
+            assert!(
+                opps.is_empty(),
+                "stale pool mixed with fresh must not produce a cycle: {opps:?}"
+            );
+        }
+    }
+
     /// Build a tick array (88 ticks) with the given initialized ticks.
     fn tick_array_with(
         start: i32,
@@ -499,7 +618,7 @@ mod tests {
             engine.build_cycle_index(&reg, &cfg);
             engine.mark_dirty(ray_addr);
             engine.mark_dirty(orca_addr);
-            let opps = engine.run_search(&reg, &cfg);
+            let opps = engine.run_search(&reg, &cfg, None);
             assert!(
                 opps.is_empty(),
                 "exact quoting must reject the thin-pool phantom, got: {opps:?}"
@@ -519,7 +638,7 @@ mod tests {
             engine.build_cycle_index(&reg, &cfg);
             engine.mark_dirty(ray_addr);
             engine.mark_dirty(orca_addr);
-            let opps = engine.run_search(&reg, &cfg);
+            let opps = engine.run_search(&reg, &cfg, None);
             assert!(
                 !opps.is_empty(),
                 "deep-liquidity control should still find the real 2% cycle"
@@ -640,7 +759,7 @@ mod tests {
 
         engine.mark_dirty(ray_addr);
         engine.mark_dirty(orca_addr);
-        let opps = engine.run_search(&reg, &cfg);
+        let opps = engine.run_search(&reg, &cfg, None);
 
         assert!(!opps.is_empty(), "engine found no cycle in a 2% gap");
         let best = opps.iter().max_by_key(|o| o.net_profit).unwrap();
