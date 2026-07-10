@@ -61,6 +61,35 @@ impl DiscoveryEngine {
         self.routes.len()
     }
 
+    /// Pool addresses of the route behind an opportunity id (for a targeted,
+    /// single-slot re-fetch by the confirmation gate).
+    pub fn route_pools(&self, id: &str) -> Option<Vec<Pubkey>> {
+        self.routes
+            .iter()
+            .find(|r| short_hash(&r.key) == id)
+            .map(|r| r.pools.clone())
+    }
+
+    /// Re-evaluate ONE route (by opportunity id) against the current registry,
+    /// with a freshness floor. The confirmation gate calls this after
+    /// re-fetching exactly this cycle's accounts at a single slot — if the
+    /// candidate no longer clears every gate on that consistent snapshot it
+    /// was a cross-slot / stale artifact and is dropped.
+    pub fn evaluate_by_id(
+        &self,
+        id: &str,
+        registry: &PoolRegistry,
+        cfg: &MonitorConfig,
+        fresh_floor: Option<u64>,
+    ) -> Option<Opportunity> {
+        let route = self
+            .routes
+            .iter()
+            .find(|r| short_hash(&r.key) == id)?
+            .clone();
+        self.evaluate_route(&route, registry, cfg, fresh_floor)
+    }
+
     /// Enumerate every base-anchored cycle of length 2..=max_hops.
     pub fn build_cycle_index(&mut self, registry: &PoolRegistry, cfg: &MonitorConfig) {
         let mut seen = HashSet::new();
@@ -366,6 +395,99 @@ mod tests {
         let a = Pubkey::new_unique();
         let b = Pubkey::new_unique();
         assert_eq!(route_key(&[a, b]), format!("{a}>{b}"));
+    }
+
+    /// P1 confirmation gate: evaluate_by_id must re-evaluate the exact route
+    /// behind an opportunity id (used to re-quote one candidate on a fresh
+    /// single-slot snapshot), and return None for an unknown id.
+    #[test]
+    fn evaluate_by_id_reevaluates_route_and_rejects_unknown() {
+        use crate::config::MonitorConfig;
+        use crate::types::{PoolCommon, PoolState, RaydiumPool};
+        use std::collections::HashMap;
+
+        let wsol: Pubkey = WSOL_MINT_STR.parse().unwrap();
+        let usdc: Pubkey = crate::config::USDC_MINT_STR.parse().unwrap();
+        let p1 = Pubkey::new_unique();
+        let p2 = Pubkey::new_unique();
+        let ray = |addr: Pubkey, quote_reserve: u64| {
+            PoolState::Raydium(RaydiumPool {
+                common: PoolCommon {
+                    address: addr,
+                    label: None,
+                    mint_a: wsol,
+                    mint_b: usdc,
+                    vault_a: Pubkey::new_unique(),
+                    vault_b: Pubkey::new_unique(),
+                    decimals_a: 9,
+                    decimals_b: 6,
+                    last_slot: 200,
+                    last_updated_ms: now_ms(),
+                    ready: true,
+                },
+                vault_a_balance: 5_000 * 10u64.pow(9),
+                vault_b_balance: quote_reserve,
+                open_orders: Pubkey::new_unique(),
+                open_orders_base_total: 0,
+                open_orders_quote_total: 0,
+                base_need_take_pnl: 0,
+                quote_need_take_pnl: 0,
+                swap_fee_numerator: 25,
+                swap_fee_denominator: 10_000,
+                status: 6,
+                pool_open_time: 0,
+            })
+        };
+        let mut bounds = HashMap::new();
+        bounds.insert(wsol, (50_000_000u64, 10_000_000_000u64));
+        let cfg = MonitorConfig {
+            geyser_endpoint: String::new(),
+            geyser_x_token: None,
+            rpc_endpoint: String::new(),
+            redis_url: String::new(),
+            opportunity_channel: String::new(),
+            opportunity_list: String::new(),
+            opportunity_list_max: 1000,
+            base_mints: vec![wsol],
+            max_hops: 4,
+            min_profit_bps: 5,
+            slippage_bps: 20,
+            max_clmm_impact_bps: 100,
+            trade_bounds: bounds,
+            base_signature_fee_lamports: 5_000,
+            priority_fee_lamports: 100_000,
+            jito_tip_lamports: 1_000_000,
+            opportunity_cooldown_ms: 500,
+            pools: vec![],
+        };
+        let mut reg = PoolRegistry::new();
+        reg.register_token(wsol, 9);
+        reg.register_token(usdc, 6);
+        reg.add_pool(ray(p1, 750_000 * 10u64.pow(6)));
+        reg.add_pool(ray(p2, 765_000 * 10u64.pow(6)));
+        let mut engine = DiscoveryEngine::new(cfg.opportunity_cooldown_ms);
+        engine.build_cycle_index(&reg, &cfg);
+        engine.mark_dirty(p1);
+        engine.mark_dirty(p2);
+        let opps = engine.run_search(&reg, &cfg, Some(196));
+        assert!(!opps.is_empty(), "setup should surface a candidate");
+        let id = &opps[0].id;
+
+        // Re-evaluating the same id on the same registry reproduces it.
+        let re = engine.evaluate_by_id(id, &reg, &cfg, Some(196));
+        assert!(
+            re.is_some(),
+            "evaluate_by_id must reproduce a live candidate"
+        );
+        assert_eq!(re.unwrap().id, *id);
+        // route_pools resolves the id to its pools for the targeted re-fetch.
+        assert_eq!(engine.route_pools(id).map(|p| p.len()), Some(2));
+        // Unknown id → None.
+        assert!(engine
+            .evaluate_by_id("deadbeefdeadbeef", &reg, &cfg, Some(196))
+            .is_none());
+        // Stale floor above the pools' slot → confirmation fails (artifact).
+        assert!(engine.evaluate_by_id(id, &reg, &cfg, Some(500)).is_none());
     }
 
     /// REGRESSION (P0-3 / P0-2 / P0-4): the freshness gate must reject any

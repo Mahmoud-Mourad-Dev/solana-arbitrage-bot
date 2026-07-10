@@ -70,6 +70,16 @@ struct Report {
     sleep_gaps: u64,
     /// largest slot spread seen within a single poll.
     max_slot_spread: u64,
+    /// raw candidates surfaced by discovery (before the confirmation gate).
+    candidates_raw: u64,
+    /// candidates dropped because a single-slot re-fetch wasn't possible.
+    confirm_rejected_inconsistent: u64,
+    /// candidates that vanished on the consistent single-slot re-quote
+    /// (cross-slot / stale artifacts — the phantom class).
+    confirm_rejected_profit: u64,
+    /// confirmation re-fetches that errored (RPC).
+    confirm_errors: u64,
+    /// CONFIRMED cycles (survived single-slot re-quote) keyed by id.
     opps: HashMap<String, OppRecord>,
     hourly: Vec<u64>,
 }
@@ -181,9 +191,17 @@ fn print_and_write_report(
     );
     println!("  whirlpool quotes:   {ok} exact-quotable, {missing} missing-ticks, {beyond} beyond-coverage");
     println!("  min profit gate:    {} bps", cfg.min_profit_bps);
-    println!("  unique cycles seen: {}", report.opps.len());
+    println!(
+        "  confirmation gate:  {} raw candidates -> {} CONFIRMED, {} vanished on single-slot re-quote, {} unconfirmable ({} fetch errors)",
+        report.candidates_raw,
+        report.opps.len(),
+        report.confirm_rejected_profit,
+        report.confirm_rejected_inconsistent,
+        report.confirm_errors,
+    );
+    println!("  unique CONFIRMED cycles: {}", report.opps.len());
     let total_opps: u64 = report.opps.values().map(|r| r.count).sum();
-    println!("  total opportunity emissions: {total_opps}");
+    println!("  total confirmed emissions:  {total_opps}");
 
     if report.opps.is_empty() {
         println!("\n  NO opportunities surfaced. With exact quoting + consistency guards this");
@@ -220,6 +238,11 @@ fn print_and_write_report(
         "polls_skipped_inconsistent": report.polls_skipped_inconsistent,
         "max_slot_spread": report.max_slot_spread,
         "sleep_gaps_detected": report.sleep_gaps,
+        "candidates_raw": report.candidates_raw,
+        "confirmed_cycles": report.opps.len(),
+        "confirm_rejected_profit": report.confirm_rejected_profit,
+        "confirm_rejected_inconsistent": report.confirm_rejected_inconsistent,
+        "confirm_errors": report.confirm_errors,
         "min_profit_bps": cfg.min_profit_bps,
         "whirlpool_quotable": ok,
         "whirlpool_missing_ticks": missing,
@@ -409,20 +432,51 @@ async fn main() -> Result<()> {
                 }
                 let hour = ((now - started_ms) / 3_600_000) as usize;
                 while report.hourly.len() <= hour { report.hourly.push(0); }
-                for opp in engine.run_search(&registry, &cfg, Some(floor)) {
+
+                // Raw candidates from the (already consistency-gated) poll.
+                let candidates = engine.run_search(&registry, &cfg, Some(floor));
+                for raw in candidates {
+                    report.candidates_raw += 1;
+
+                    // ── P1 CONFIRMATION GATE ──────────────────────────────
+                    // Re-fetch EXACTLY this cycle's accounts in one call (one
+                    // slot, zero cross-slot risk) and re-quote. A candidate
+                    // that no longer clears every gate on that consistent
+                    // single-slot snapshot was an artifact — drop it.
+                    let Some(cycle_pools) = engine.route_pools(&raw.id) else { continue; };
+                    let accts = registry.accounts_for_pools(&cycle_pools);
+                    let csnap = match poll_accounts(&rpc, &accts).await {
+                        Ok(s) => s,
+                        Err(e) => { warn!(error = %e, id = %raw.id, "confirm fetch failed"); report.confirm_errors += 1; continue; }
+                    };
+                    if csnap.max_slot.saturating_sub(csnap.min_slot) > 0 {
+                        // Couldn't get a single-slot snapshot — refuse to confirm.
+                        report.confirm_rejected_inconsistent += 1;
+                        continue;
+                    }
+                    for (pk, data, slot) in &csnap.accounts {
+                        registry.apply_account_update(*pk, data, *slot);
+                    }
+                    let cfloor = fresh_floor(csnap.max_slot, DEFAULT_MAX_POOL_SLOT_LAG);
+                    let confirmed = match engine.evaluate_by_id(&raw.id, &registry, &cfg, Some(cfloor)) {
+                        Some(c) => c,
+                        None => { report.confirm_rejected_profit += 1; continue; }
+                    };
+
+                    // Survived single-slot confirmation → record it.
                     report.hourly[hour] += 1;
-                    let base = opp.base_symbol.clone().unwrap_or_default();
-                    let bps = opp.net_profit_bps as u64;
-                    let rec = report.opps.entry(opp.id.clone()).or_insert(OppRecord {
-                        base: base.clone(), hops: opp.hops.len(), count: 0,
+                    let base = confirmed.base_symbol.clone().unwrap_or_default();
+                    let bps = confirmed.net_profit_bps as u64;
+                    let rec = report.opps.entry(confirmed.id.clone()).or_insert(OppRecord {
+                        base: base.clone(), hops: confirmed.hops.len(), count: 0,
                         best_net: 0, best_bps: 0, first_ms: now, last_ms: now,
                     });
                     if rec.count == 0 {
-                        info!(id = %opp.id, base = %base, hops = opp.hops.len(), net = opp.net_profit, bps, slot = opp.slot, "NEW cycle candidate");
+                        info!(id = %confirmed.id, base = %base, hops = confirmed.hops.len(), net = confirmed.net_profit, bps, slot = confirmed.slot, "CONFIRMED cycle (single-slot)");
                     }
                     rec.count += 1;
                     rec.last_ms = now;
-                    rec.best_net = rec.best_net.max(opp.net_profit);
+                    rec.best_net = rec.best_net.max(confirmed.net_profit);
                     rec.best_bps = rec.best_bps.max(bps);
                 }
             }

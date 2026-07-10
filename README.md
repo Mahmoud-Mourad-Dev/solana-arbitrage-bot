@@ -178,7 +178,21 @@ major pairs like SOL/USDC are arbitraged flat.
 
 Caveat: polling latency (seconds) means these are **not executable** — they
 would be stale and contested. It is a feasibility probe, not a trading loop.
-Quotes are conservative (single-tick CLMM, fees in), so real edge is ≥ shown.
+
+**Confirmation gate (P1).** Every raw candidate is re-validated before it is
+reported: the preview re-fetches *exactly that cycle's accounts in one
+`getMultipleAccounts` call* (guaranteed a single slot, zero cross-slot risk)
+and re-quotes. A candidate that no longer clears every gate on that
+consistent snapshot was a cross-slot / stale artifact and is **dropped**. The
+report shows `candidates_raw → confirmed_cycles`, plus how many
+`confirm_rejected_profit` (vanished on the clean re-quote) and
+`confirm_rejected_inconsistent` (couldn't get a single-slot snapshot).
+
+This is the strongest *math-side* confirmation possible read-only. It is NOT
+on-chain VM execution: a true `simulateTransaction` of a swap needs either a
+funded WSOL inventory + keypair, or a local SVM replaying cloned accounts —
+both out of scope for the read-only preview. Treat a confirmed cycle as
+"survived a consistent single-slot re-quote," not "the chain executed it."
 
 ### Live side-by-side parity
 

@@ -104,6 +104,36 @@ impl PoolRegistry {
         self.tick_array_to_pool.keys().copied().collect()
     }
 
+    /// Every account needed to quote exactly the given pools (pool account +
+    /// vaults + Raydium open-orders + whirlpool tick arrays). Used by the
+    /// single-slot confirmation gate to re-fetch just one cycle's accounts in
+    /// one call — guaranteeing a consistent (single-slot) snapshot.
+    pub fn accounts_for_pools(&self, pools: &[Pubkey]) -> Vec<Pubkey> {
+        let mut set = Vec::new();
+        for addr in pools {
+            let Some(p) = self.pools.get(addr) else {
+                continue;
+            };
+            let c = p.common();
+            set.push(c.address);
+            set.push(c.vault_a);
+            set.push(c.vault_b);
+            if let PoolState::Raydium(r) = p {
+                set.push(r.open_orders);
+            }
+        }
+        // Tick arrays owned by any of the requested whirlpools.
+        let want: std::collections::HashSet<Pubkey> = pools.iter().copied().collect();
+        for (ta, (pool, _)) in &self.tick_array_to_pool {
+            if want.contains(pool) {
+                set.push(*ta);
+            }
+        }
+        set.sort();
+        set.dedup();
+        set
+    }
+
     /// Forget per-account slot bookkeeping so the next fetch is accepted even
     /// if it reports an older-looking slot. Used after a detected sleep/gap so
     /// a full rehydration isn't blocked by pre-gap slot records.
