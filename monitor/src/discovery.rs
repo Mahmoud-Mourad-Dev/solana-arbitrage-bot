@@ -262,7 +262,7 @@ impl DiscoveryEngine {
         }
         let gross_profit = gross_profit as u64;
 
-        let cost = self.execution_cost_in_base(&route.base_mint, registry, cfg)?;
+        let cost = self.execution_cost_in_base(&route.base_mint, gross_profit, registry, cfg)?;
         let net_profit = gross_profit.checked_sub(cost)?;
         if net_profit == 0 {
             return None;
@@ -316,17 +316,23 @@ impl DiscoveryEngine {
         })
     }
 
-    /// Execution cost (sig + priority + tip) in the base mint. WSOL: direct
-    /// lamports. Otherwise price through the freshest WSOL/base pool; None
-    /// if unpriceable (cycle skipped, never published with unpriced cost).
+    /// Execution cost in the base mint, via the SHARED cost model so the
+    /// monitor's profitability gate matches the executor's exactly. Cost =
+    /// fixed costs + the gross-scaled inclusion payment + the reserved margin.
+    /// WSOL base: the model is lamport-exact. Other bases: priced through the
+    /// freshest WSOL/base pool (a pre-filter approximation — the executor only
+    /// trades WSOL and re-checks with the same model). None if unpriceable.
     fn execution_cost_in_base(
         &self,
         base_mint: &Pubkey,
+        gross_profit: u64,
         registry: &PoolRegistry,
         cfg: &MonitorConfig,
     ) -> Option<u64> {
-        let lamports =
-            cfg.base_signature_fee_lamports + cfg.priority_fee_lamports + cfg.jito_tip_lamports;
+        let model = cfg.cost_model();
+        let lamports = model
+            .total_burn(gross_profit)
+            .saturating_add(model.margin_lamports);
         if base_mint == &self.wsol {
             return Some(lamports);
         }
@@ -459,6 +465,7 @@ mod tests {
             jito_tip_lamports: 1_000_000,
             opportunity_cooldown_ms: 500,
             pools: vec![],
+            ..Default::default()
         };
         let mut reg = PoolRegistry::new();
         reg.register_token(wsol, 9);
@@ -555,6 +562,7 @@ mod tests {
             jito_tip_lamports: 1_000_000,
             opportunity_cooldown_ms: 500,
             pools: vec![],
+            ..Default::default()
         };
 
         // Control: BOTH pools fresh (slot 200), floor 196 → cycle IS found.
@@ -727,6 +735,7 @@ mod tests {
             jito_tip_lamports: 1_000_000,
             opportunity_cooldown_ms: 500,
             pools: vec![],
+            ..Default::default()
         };
 
         // THIN pool with a killer tick → exact quoting must find NO cycle.
@@ -873,6 +882,7 @@ mod tests {
             jito_tip_lamports: 1_000_000,
             opportunity_cooldown_ms: 500,
             pools: vec![],
+            ..Default::default()
         };
 
         let mut engine = DiscoveryEngine::new(cfg.opportunity_cooldown_ms);

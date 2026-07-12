@@ -9,27 +9,18 @@
 //! monitor's own tip estimate is already baked into its netProfit (using
 //! net would double-count).
 
-const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
-
-/// Profit share tiers (gross profit -> tip bps).
-fn tier_bps(gross_profit_lamports: u64) -> u64 {
-    match gross_profit_lamports {
-        p if p < LAMPORTS_PER_SOL / 200 => 5_000, // < 0.005 SOL: 50%
-        p if p < LAMPORTS_PER_SOL / 20 => 6_000,  // < 0.05  SOL: 60%
-        p if p < LAMPORTS_PER_SOL / 2 => 7_000,   // < 0.5   SOL: 70%
-        _ => 8_000,                               // whales: 80%
-    }
-}
-
+/// Thin wrapper over the shared [`arb_common::cost::jito_tip`] so the executor
+/// and the monitor compute the SAME tip from the same schedule — the split
+/// cost model was exactly this drifting apart.
 pub fn compute_tip(gross_profit_lamports: u64, min_tip: u64, max_tip: u64) -> u64 {
-    let scaled =
-        (gross_profit_lamports as u128 * tier_bps(gross_profit_lamports) as u128 / 10_000) as u64;
-    scaled.max(min_tip).min(max_tip)
+    arb_common::cost::jito_tip(gross_profit_lamports, min_tip, max_tip)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 
     #[test]
     fn flat_floor_applies_to_dust() {

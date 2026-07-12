@@ -104,6 +104,7 @@ fn build_config(f: &Fixtures) -> MonitorConfig {
         jito_tip_lamports: u64_field(c, "jitoTipLamports"),
         opportunity_cooldown_ms: c["opportunityCooldownMs"].as_u64().unwrap(),
         pools: vec![],
+        ..Default::default()
     }
 }
 

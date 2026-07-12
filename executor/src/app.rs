@@ -36,7 +36,6 @@ use crate::builder::{build_bundle_transaction, BundleParams};
 use crate::config::Config;
 use crate::jito::{random_tip_account, JitoClient};
 use crate::resolver::{derive_ata, Resolver, ATA_PROGRAM, TOKEN_PROGRAM, WSOL_MINT};
-use crate::tip::compute_tip;
 
 pub struct App {
     pub cfg: Config,
@@ -61,13 +60,15 @@ impl App {
         info!(
             payer = %payer.pubkey(),
             program = %cfg.arb_program_id,
+            mode = %cfg.mode,
             dry_run = cfg.dry_run,
             enable_submit = cfg.enable_submit,
             enable_jito = cfg.enable_jito,
             "executor ready"
         );
-        if !cfg.dry_run && cfg.enable_submit && cfg.enable_jito {
-            warn!("SUBMISSION ARMED — live bundles will be sent to Jito");
+        if cfg.mode.allows_live_submission() && !cfg.dry_run && cfg.enable_submit && cfg.enable_jito
+        {
+            warn!("SUBMISSION ARMED — MODE=live, live bundles will be sent to Jito");
         }
 
         let rpc = Arc::new(RpcClient::new_with_commitment(
@@ -132,26 +133,24 @@ impl App {
             recent.insert(opp.id.clone(), now);
         }
 
-        // 4) Economics: tip scales off GROSS profit (monitor already estimated
-        //    its own costs into netProfit; we recompute with the real tip).
-        let tip = compute_tip(
-            opp.gross_profit,
-            self.cfg.min_tip_lamports,
-            self.cfg.max_tip_lamports,
-        );
-        let fees = self.cfg.fee_lamports();
-        let min_profit = tip
-            .checked_add(fees)
-            .and_then(|v| v.checked_add(self.cfg.profit_margin_lamports))
+        // 4) Economics via the SHARED cost model (identical to the monitor's).
+        //    Tip scales off GROSS profit; `min_profit` is the on-chain floor
+        //    (fixed costs + tip + margin) the program enforces or reverts.
+        let cost = self.cfg.cost_model();
+        let gross = opp.gross_profit;
+        let tip = cost.payment(gross);
+        let fees = cost.fixed_costs();
+        let min_profit = cost
+            .total_burn(gross)
+            .checked_add(cost.margin_lamports)
             .context("cost overflow")?;
-        if opp.gross_profit <= min_profit {
+        if gross <= min_profit {
             bail!(
-                "unprofitable after costs: gross={} tip={tip} fees={fees} (id={})",
-                opp.gross_profit,
+                "unprofitable after costs: gross={gross} tip={tip} fees={fees} (id={})",
                 opp.id
             );
         }
-        let projected_net = opp.gross_profit - min_profit;
+        let projected_net = gross - min_profit;
         if projected_net < self.cfg.min_net_profit_lamports {
             bail!(
                 "below MIN_NET_PROFIT_LAMPORTS: net={projected_net} < {} (id={})",
@@ -186,9 +185,13 @@ impl App {
             lookup_tables: &self.lookup_tables,
         })?;
 
-        // 7) Submission gate: real submits need DRY_RUN=false AND explicit
-        //    ENABLE_SUBMIT=true AND ENABLE_JITO=true. Anything less simulates.
-        let submit_armed = !self.cfg.dry_run && self.cfg.enable_submit && self.cfg.enable_jito;
+        // 7) Submission gate: real submits require MODE=live (armed) AND
+        //    DRY_RUN=false AND ENABLE_SUBMIT=true AND ENABLE_JITO=true. In any
+        //    other mode (observe/replay/simulate) we simulate and never send.
+        let submit_armed = self.cfg.mode.allows_live_submission()
+            && !self.cfg.dry_run
+            && self.cfg.enable_submit
+            && self.cfg.enable_jito;
         if !submit_armed {
             let sim = self.rpc.simulate_transaction(&tx).await?;
             info!(

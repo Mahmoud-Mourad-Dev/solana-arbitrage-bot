@@ -1,9 +1,15 @@
 use anyhow::{Context, Result};
+use arb_common::cost::{CostModel, ExecutionPayment};
+use arb_common::mode::{resolve_live, Mode};
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Execution mode. DEFAULT `observe`. Only `live` (armed) may submit.
+    pub mode: Mode,
+    /// Path to the acceptance marker file that arms `MODE=live`.
+    pub live_marker_path: String,
     pub rpc_url: String,
     pub redis_url: String,
     pub redis_channel: String,
@@ -72,7 +78,19 @@ impl Config {
             .collect::<Result<Vec<_>, _>>()
             .context("LOOKUP_TABLES contains an invalid pubkey")?;
 
+        // Mode gate (S1): default observe. `MODE=live` is REFUSED unless it is
+        // armed by BOTH the explicit submit flag AND the acceptance marker file.
+        let requested_mode = env_str("MODE", "observe")
+            .parse::<Mode>()
+            .map_err(|e| anyhow::anyhow!("MODE invalid: {e}"))?;
+        let enable_submit = env_parse("ENABLE_SUBMIT", false)?;
+        let live_marker_path = env_str("LIVE_MARKER_PATH", ".live-armed");
+        let mode = resolve_live(requested_mode, enable_submit, &live_marker_path)
+            .map_err(|e| anyhow::anyhow!(e))?;
+
         Ok(Self {
+            mode,
+            live_marker_path,
             rpc_url: env_str("RPC_ENDPOINT", "https://api.mainnet-beta.solana.com"),
             redis_url: env_str("REDIS_URL", "redis://127.0.0.1:6379"),
             redis_channel: env_str("REDIS_OPPORTUNITY_CHANNEL", "arbitrage_opportunities"),
@@ -93,7 +111,7 @@ impl Config {
             whirlpool_ttl_secs: env_parse("WHIRLPOOL_TTL_SECS", 10u64)?,
             lookup_tables,
             dry_run: env_parse("DRY_RUN", true)?,
-            enable_submit: env_parse("ENABLE_SUBMIT", false)?,
+            enable_submit,
             enable_jito: env_parse("ENABLE_JITO", false)?,
             min_net_profit_lamports: env_parse("MIN_NET_PROFIT_LAMPORTS", 100_000u64)?,
         })
@@ -102,5 +120,22 @@ impl Config {
     /// Total non-tip lamports a submission burns if it lands.
     pub fn fee_lamports(&self) -> u64 {
         5_000 + (self.cu_limit as u64 * self.cu_price_microlamports) / 1_000_000
+    }
+
+    /// Build the shared [`CostModel`] from this config. The monitor builds the
+    /// same model from the same values, so both sides agree on profitability.
+    pub fn cost_model(&self) -> CostModel {
+        CostModel {
+            signature_fee_lamports: 5_000,
+            compute_unit_limit: self.cu_limit,
+            compute_unit_price_micro: self.cu_price_microlamports,
+            margin_lamports: self.profit_margin_lamports,
+            required_net_lamports: self.min_net_profit_lamports,
+            payment: ExecutionPayment::JitoTip {
+                min_lamports: self.min_tip_lamports,
+                max_lamports: self.max_tip_lamports,
+            },
+            ..Default::default()
+        }
     }
 }

@@ -15,7 +15,9 @@
 
 extern crate alloc;
 
+pub mod cost;
 pub mod ix;
+pub mod mode;
 
 #[cfg(feature = "serde")]
 pub mod opportunity;
