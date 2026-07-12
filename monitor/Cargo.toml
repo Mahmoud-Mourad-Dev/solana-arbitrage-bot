@@ -24,6 +24,9 @@ yellowstone-grpc-client = "13"
 yellowstone-grpc-proto = "12"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
+[dev-dependencies]
+base64 = "0.22"
+
 [[bin]]
 name = "arb-monitor"
 path = "src/main.rs"
