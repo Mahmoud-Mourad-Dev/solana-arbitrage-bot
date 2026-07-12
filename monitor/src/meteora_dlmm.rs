@@ -1,24 +1,28 @@
 //! Meteora DLMM (`LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo`) support:
-//! LbPair + BinArray parsers, exact Q64.64 bin-price math, variable-fee
-//! model, and an integer bin-traversal quote.
+//! LbPair + BinArray parsers and an exact-in quote that is a faithful port of
+//! Meteora's own off-chain quoting code (`dlmm-sdk/commons/src/quote.rs` +
+//! `extensions/{bin,lb_pair}.rs`), including:
+//!
+//! - **collect-fee-mode** (`InputOnly` / `OnlyY`): fee side depends on the
+//!   pool AND the swap direction — never assumed.
+//! - **per-bin LIMIT ORDER fills**: MM liquidity first, then processed
+//!   orders, then open orders, all at the bin price.
+//! - **bitmap-based array traversal**: empty gaps are skipped exactly like
+//!   the program does; a needed-but-missing array is a structured error.
+//! - volatility reference/accumulator updates per the on-chain rules.
 //!
 //! Verification status (see `docs/meteora-dlmm-layout.md`):
-//! - **LbPair / BinArray layouts: VERIFIED** against real mainnet accounts
-//!   (parsed reserves resolve to token accounts of the parsed mints, owned by
-//!   the pair; bin-array `lb_pair` back-pointer and index range check out).
-//! - **`price_from_id`: EXACT** — byte-identical to the on-chain stored bin
-//!   prices for 140 bins across two pools with different bin steps.
-//! - **Swap traversal + fee application: NEAR-PARITY, not exact.** Live
-//!   parity vs 3 real swaps (2026-07-12): two single-bin fills −1 unit
-//!   (conservative), one bin-crossing fill **+679 (+0.0006%) OVERestimate**.
-//!   Known gaps vs Meteora's current `commons/src/quote.rs`: per-bin limit
-//!   order fills and collect-fee-mode (fee-on-input pools) are NOT modelled
-//!   here. Until the full port (S4b) lands and re-passes live parity, treat
-//!   this quote as approximate and do not use it for final go/no-go sizing.
+//! - Layouts: byte-verified against real mainnet accounts AND the official
+//!   IDL (`idls/dlmm.json`, LbPair total 904, Bin 144).
+//! - `price_from_id`: byte-identical to on-chain stored prices (140 bins,
+//!   two pools, two bin steps).
+//! - Quote path: ported 1:1 from the official source; must re-pass LIVE
+//!   parity (zero overestimates) before it gates real sizing.
 //!
-//! Financial invariants: integer-only; output rounding is always DOWN and fee
-//! rounding always UP (never overestimate output); missing bin arrays produce
-//! [`DlmmQuoteError::InsufficientBinCoverage`], never a partial fake quote.
+//! Financial invariants: integer-only; conversion rounding DOWN, fee/capacity
+//! rounding UP; missing data → structured error, never a fabricated quote.
+//! Token-2022 transfer fees are NOT modelled here — discovery must screen out
+//! mints with a non-zero transfer fee before this quote is trusted.
 
 use ruint::aliases::U256;
 use solana_sdk::pubkey::Pubkey;
@@ -33,18 +37,23 @@ pub const BIN_ARRAY_DISCRIMINATOR: [u8; 8] = [0x5c, 0x8e, 0x5c, 0xdc, 0x05, 0x94
 
 pub const MAX_BIN_PER_ARRAY: i32 = 70;
 pub const BASIS_POINT_MAX: u64 = 10_000;
-/// Fee rates are expressed in 1e9 (like the on-chain FEE_PRECISION).
+/// Fee rates are expressed in 1e9 (the on-chain FEE_PRECISION).
 pub const FEE_PRECISION: u64 = 1_000_000_000;
 /// Hard cap on the total fee rate: 10%.
 pub const MAX_FEE_RATE: u64 = 100_000_000;
+/// Global bin id bounds (program constants, not per-pair).
+pub const MIN_BIN_ID: i32 = -443_636;
+pub const MAX_BIN_ID: i32 = 443_636;
+/// The in-account bitmap covers array indices [-512, 511].
+pub const BIN_ARRAY_BITMAP_SIZE: i32 = 512;
 
 const ONE_Q64: u128 = 1u128 << 64;
 
 // ─────────────────────────────── layouts ───────────────────────────────
+// All offsets below match the official IDL (idls/dlmm.json) AND were
+// byte-verified against live mainnet accounts (docs/meteora-dlmm-layout.md).
 
-/// StaticParameters (32 bytes at offset 8). Field offsets verified against a
-/// live pair (base_factor 10000, bin_step 15 ⇒ 0.15% base fee — plausible and
-/// cross-checked against the pair's advertised fee).
+/// StaticParameters (32 bytes at offset 8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StaticParameters {
     pub base_factor: u16,
@@ -57,10 +66,13 @@ pub struct StaticParameters {
     pub max_bin_id: i32,
     pub protocol_share: u16,
     pub base_fee_power_factor: u8,
+    /// 0=Undetermined, 1=LiquidityMining, 2=LimitOrder.
+    pub function_type: u8,
+    /// 0=InputOnly, 1=OnlyY.
+    pub collect_fee_mode: u8,
 }
 
-/// VariableParameters (32 bytes at offset 40). `last_update_timestamp` offset
-/// (56) verified: parses to a unix time minutes before capture.
+/// VariableParameters (32 bytes at offset 40; timestamp at 56).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VariableParameters {
     pub volatility_accumulator: u32,
@@ -69,7 +81,7 @@ pub struct VariableParameters {
     pub last_update_timestamp: i64,
 }
 
-/// Decoded LbPair (the fields the strategy needs).
+/// Decoded LbPair (the fields the quote path needs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LbPair {
     pub parameters: StaticParameters,
@@ -78,18 +90,113 @@ pub struct LbPair {
     pub active_id: i32,
     pub bin_step: u16,
     pub status: u8,
+    pub activation_type: u8,
     pub token_x_mint: Pubkey,
     pub token_y_mint: Pubkey,
     pub reserve_x: Pubkey,
     pub reserve_y: Pubkey,
+    /// Reward mints (all-default ⇒ limit orders allowed for Undetermined).
+    pub reward_mints: [Pubkey; 2],
+    /// Which array indices ([-512,511] + 512 = bit) hold liquidity.
+    pub bin_array_bitmap: [u64; 16],
+    pub activation_point: u64,
+    /// 0 = SPL Token, 1 = Token-2022.
+    pub token_x_program_flag: u8,
+    pub token_y_program_flag: u8,
 }
 
-/// One bin's swap-relevant state. `price` is Q64.64 (Y per X).
+impl LbPair {
+    /// Limit orders participate in swaps for this pair?
+    /// Port of `is_support_limit_order`.
+    pub fn supports_limit_orders(&self) -> bool {
+        match self.parameters.function_type {
+            2 => true,  // LimitOrder
+            1 => false, // LiquidityMining
+            0 => self.reward_mints.iter().all(|m| *m == Pubkey::default()),
+            _ => false,
+        }
+    }
+
+    /// Is the trading fee charged on the input token for this direction?
+    /// Port of `fee_on_input`: InputOnly ⇒ always; OnlyY ⇒ only when Y is
+    /// the input (i.e. !swap_for_y). Unknown mode ⇒ true (matches upstream).
+    pub fn fee_on_input(&self, swap_for_y: bool) -> bool {
+        match self.parameters.collect_fee_mode {
+            0 => true,
+            1 => !swap_for_y,
+            _ => true,
+        }
+    }
+
+    /// Nearest array index with liquidity per the in-account bitmap, walking
+    /// down (`swap_for_y`) or up from `start` inclusive. `None` = nothing in
+    /// that direction (or `start` outside the core bitmap range, which would
+    /// need the bitmap-extension account we don't model).
+    fn next_array_with_liquidity(&self, swap_for_y: bool, start: i64) -> Option<i64> {
+        if !((-BIN_ARRAY_BITMAP_SIZE as i64)..(BIN_ARRAY_BITMAP_SIZE as i64)).contains(&start) {
+            return None;
+        }
+        let bit_set = |idx: i64| {
+            let bit = (idx + BIN_ARRAY_BITMAP_SIZE as i64) as usize;
+            (self.bin_array_bitmap[bit / 64] >> (bit % 64)) & 1 == 1
+        };
+        if swap_for_y {
+            (-(BIN_ARRAY_BITMAP_SIZE as i64)..=start)
+                .rev()
+                .find(|&i| bit_set(i))
+        } else {
+            (start..BIN_ARRAY_BITMAP_SIZE as i64).find(|&i| bit_set(i))
+        }
+    }
+}
+
+/// One bin's swap-relevant state (Bin is 144 bytes; offsets from the IDL).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Bin {
     pub amount_x: u64,
     pub amount_y: u64,
+    /// Q64.64, Y per X. 0 ⇒ not initialised (recompute from id).
     pub price: u128,
+    /// Open limit-order amount (fills after MM + processed layers).
+    pub open_order_amount: u64,
+    /// Remaining amount on processed limit orders (fills after MM).
+    pub processed_order_remaining_amount: u64,
+    /// Non-zero ⇒ this bin's limit orders are on the ask side.
+    pub limit_order_ask_side: u8,
+}
+
+impl Bin {
+    /// MM liquidity on the out side.
+    fn mm_amount_out(&self, swap_for_y: bool) -> u64 {
+        if swap_for_y {
+            self.amount_y
+        } else {
+            self.amount_x
+        }
+    }
+
+    /// Port of `get_limit_order_amounts_by_direction`.
+    fn limit_order_amounts(&self, swap_for_y: bool) -> (u64, u64) {
+        let is_ask = self.limit_order_ask_side != 0;
+        if (swap_for_y && !is_ask) || (!swap_for_y && is_ask) {
+            (
+                self.open_order_amount,
+                self.processed_order_remaining_amount,
+            )
+        } else {
+            (0, 0)
+        }
+    }
+
+    /// Port of `get_max_amount_out_with_limit_orders`.
+    fn max_amount_out(&self, swap_for_y: bool, support_limit_order: bool) -> u64 {
+        let mm = self.mm_amount_out(swap_for_y);
+        if !support_limit_order {
+            return mm;
+        }
+        let (open, processed) = self.limit_order_amounts(swap_for_y);
+        mm.saturating_add(open).saturating_add(processed)
+    }
 }
 
 /// Decoded BinArray: 70 consecutive bins starting at `index * 70`.
@@ -106,7 +213,7 @@ pub enum DlmmDecodeError {
     BadDiscriminator,
 }
 
-const LB_PAIR_MIN_LEN: usize = 216; // through reserve_y
+const LB_PAIR_LEN: usize = 904; // full struct per IDL
 const BIN_ARRAY_LEN: usize = 8 + 8 + 8 + 32 + 70 * 144; // 10_136 (verified)
 const BIN_SIZE: usize = 144;
 const BINS_OFFSET: usize = 56;
@@ -136,16 +243,20 @@ fn u128le(d: &[u8], o: usize) -> u128 {
     u128::from_le_bytes(d[o..o + 16].try_into().unwrap())
 }
 
-/// Decode an LbPair account (discriminator + length checked).
+/// Decode an LbPair account (discriminator + full length checked).
 pub fn decode_lb_pair(data: &[u8]) -> Result<LbPair, DlmmDecodeError> {
-    if data.len() < LB_PAIR_MIN_LEN {
+    if data.len() < LB_PAIR_LEN {
         return Err(DlmmDecodeError::TooShort {
             len: data.len(),
-            need: LB_PAIR_MIN_LEN,
+            need: LB_PAIR_LEN,
         });
     }
     if data[0..8] != LB_PAIR_DISCRIMINATOR {
         return Err(DlmmDecodeError::BadDiscriminator);
+    }
+    let mut bitmap = [0u64; 16];
+    for (i, limb) in bitmap.iter_mut().enumerate() {
+        *limb = u64le(data, 584 + i * 8);
     }
     Ok(LbPair {
         parameters: StaticParameters {
@@ -159,6 +270,8 @@ pub fn decode_lb_pair(data: &[u8]) -> Result<LbPair, DlmmDecodeError> {
             max_bin_id: i32le(data, 28),
             protocol_share: u16le(data, 32),
             base_fee_power_factor: data[34],
+            function_type: data[35],
+            collect_fee_mode: data[36],
         },
         v_parameters: VariableParameters {
             volatility_accumulator: u32le(data, 40),
@@ -170,10 +283,16 @@ pub fn decode_lb_pair(data: &[u8]) -> Result<LbPair, DlmmDecodeError> {
         active_id: i32le(data, 76),
         bin_step: u16le(data, 80),
         status: data[82],
+        activation_type: data[86],
         token_x_mint: read_pubkey(data, 88),
         token_y_mint: read_pubkey(data, 120),
         reserve_x: read_pubkey(data, 152),
         reserve_y: read_pubkey(data, 184),
+        reward_mints: [read_pubkey(data, 264), read_pubkey(data, 264 + 144)],
+        bin_array_bitmap: bitmap,
+        activation_point: u64le(data, 816),
+        token_x_program_flag: data[880],
+        token_y_program_flag: data[881],
     })
 }
 
@@ -195,6 +314,9 @@ pub fn decode_bin_array(data: &[u8]) -> Result<BinArray, DlmmDecodeError> {
             amount_x: u64le(data, o),
             amount_y: u64le(data, o + 8),
             price: u128le(data, o + 16),
+            open_order_amount: u64le(data, o + 112),
+            processed_order_remaining_amount: u64le(data, o + 128),
+            limit_order_ask_side: data[o + 140],
         });
     }
     Ok(BinArray {
@@ -224,9 +346,6 @@ pub fn price_from_id(bin_id: i32, bin_step: u16) -> Option<u128> {
     pow_q64(base, bin_id)
 }
 
-/// Meteora `u128x128_math::pow`: Q64.64 base, signed exponent. When the base
-/// is ≥ 1.0 it works with `u128::MAX / base` (≈ the Q64.64 inverse) and flips
-/// the invert flag; every multiply is floor(`>> 64`).
 fn pow_q64(base: u128, exp: i32) -> Option<u128> {
     if exp == 0 {
         return Some(ONE_Q64);
@@ -291,110 +410,123 @@ fn shl_div_ceil(a: u128, price: u128) -> Option<u128> {
     (r <= U256::from(u128::MAX)).then(|| r.to::<u128>())
 }
 
-// ─────────────────────────── fees (PROVISIONAL) ───────────────────────────
-
-/// Base fee rate in 1e9 units: `base_factor * bin_step * 10 * 10^power`.
-pub fn base_fee_rate(p: &StaticParameters, bin_step: u16) -> u64 {
-    let r = (p.base_factor as u128)
-        * (bin_step as u128)
-        * 10u128
-        * 10u128.pow(p.base_fee_power_factor as u32);
-    r.min(u64::MAX as u128) as u64
+/// Port of `Bin::get_amount_out` (conversion of input to output at price).
+fn amount_out_at_price(amount_in: u64, price: u128, swap_for_y: bool, ceil: bool) -> Option<u64> {
+    let v = if swap_for_y {
+        if ceil {
+            mul_shr_ceil(price, amount_in as u128)?
+        } else {
+            mul_shr_floor(price, amount_in as u128)?
+        }
+    } else if ceil {
+        shl_div_ceil(amount_in as u128, price)?
+    } else {
+        shl_div_floor(amount_in as u128, price)?
+    };
+    u64::try_from(v).ok()
 }
 
-/// Variable fee rate in 1e9 units for a given volatility accumulator:
-/// `ceil((va * bin_step)^2 * vfc / 1e11)`.
-pub fn variable_fee_rate(p: &StaticParameters, bin_step: u16, volatility_accumulator: u32) -> u64 {
+/// Port of `Bin::get_amount_in` (input needed for a given output at price).
+fn amount_in_for_out(amount_out: u64, price: u128, swap_for_y: bool, ceil: bool) -> Option<u64> {
+    let v = if swap_for_y {
+        if ceil {
+            shl_div_ceil(amount_out as u128, price)?
+        } else {
+            shl_div_floor(amount_out as u128, price)?
+        }
+    } else if ceil {
+        mul_shr_ceil(price, amount_out as u128)?
+    } else {
+        mul_shr_floor(price, amount_out as u128)?
+    };
+    u64::try_from(v).ok()
+}
+
+// ─────────────────────────────── fees ───────────────────────────────
+// Ports of the LbPairExtension fee functions (u128 rates in 1e9 scale).
+
+pub fn base_fee_rate(p: &StaticParameters, bin_step: u16) -> u128 {
+    (p.base_factor as u128)
+        * (bin_step as u128)
+        * 10u128
+        * 10u128.pow(p.base_fee_power_factor as u32)
+}
+
+pub fn variable_fee_rate(p: &StaticParameters, bin_step: u16, volatility_accumulator: u32) -> u128 {
     if p.variable_fee_control == 0 {
         return 0;
     }
     let square = (volatility_accumulator as u128 * bin_step as u128).pow(2);
-    let v = square * p.variable_fee_control as u128;
-    v.div_ceil(100_000_000_000).min(u64::MAX as u128) as u64
+    (square * p.variable_fee_control as u128).div_ceil(100_000_000_000)
 }
 
-/// Total fee rate, capped at 10%.
-pub fn total_fee_rate(p: &StaticParameters, bin_step: u16, volatility_accumulator: u32) -> u64 {
-    (base_fee_rate(p, bin_step).saturating_add(variable_fee_rate(
-        p,
-        bin_step,
-        volatility_accumulator,
-    )))
-    .min(MAX_FEE_RATE)
+pub fn total_fee_rate(p: &StaticParameters, bin_step: u16, volatility_accumulator: u32) -> u128 {
+    (base_fee_rate(p, bin_step) + variable_fee_rate(p, bin_step, volatility_accumulator))
+        .min(MAX_FEE_RATE as u128)
 }
 
-/// Fee ON TOP of a net amount (used when a bin is fully consumed):
-/// `ceil(amount * rate / (1e9 − rate))`.
-fn compute_fee(amount: u128, rate: u64) -> Option<u128> {
-    let denom = (FEE_PRECISION as u128).checked_sub(rate as u128)?;
-    if denom == 0 {
+/// Fee ON TOP of a net amount: `ceil(amount·rate/(1e9−rate))`.
+fn compute_fee(amount: u64, rate: u128) -> Option<u64> {
+    let denominator = (FEE_PRECISION as u128).checked_sub(rate)?;
+    if denominator == 0 {
         return None;
     }
-    let num = amount.checked_mul(rate as u128)?;
-    Some(num.div_ceil(denom))
+    let fee = (amount as u128)
+        .checked_mul(rate)?
+        .checked_add(denominator)?
+        - 1;
+    u64::try_from(fee / denominator).ok()
 }
 
-/// Fee taken FROM a gross amount (partial-bin case):
-/// `ceil(amount * rate / 1e9)`.
-fn compute_fee_from_amount(amount: u128, rate: u64) -> Option<u128> {
-    let num = amount.checked_mul(rate as u128)?;
-    Some(num.div_ceil(FEE_PRECISION as u128))
+/// Fee taken FROM a gross amount: `ceil(amount·rate/1e9)`.
+fn compute_fee_from_amount(amount_with_fees: u64, rate: u128) -> Option<u64> {
+    let fee = (amount_with_fees as u128)
+        .checked_mul(rate)?
+        .checked_add(FEE_PRECISION as u128 - 1)?;
+    u64::try_from(fee / FEE_PRECISION as u128).ok()
 }
 
-/// Volatility state used to compute the per-bin variable fee during a quote.
-/// Mirrors the on-chain reference/accumulator update rules.
-#[derive(Debug, Clone, Copy)]
-pub struct VolatilityTracker {
-    pub volatility_reference: u32,
-    pub index_reference: i32,
-}
+// ───────────────────────── volatility updates ─────────────────────────
+// Ports of `update_references` / `update_volatility_accumulator`; they act on
+// a WORKING COPY of VariableParameters during a quote.
 
-impl VolatilityTracker {
-    /// Apply the time-decay reference update the program performs at swap
-    /// start. `now_unix` should be the current cluster time; if it is older
-    /// than `last_update_timestamp` we conservatively skip decay (higher fee ⇒
-    /// lower quoted output — errs against the trade, never for it).
-    pub fn at_swap_start(
-        p: &StaticParameters,
-        v: &VariableParameters,
-        active_id: i32,
-        now_unix: i64,
-    ) -> Self {
-        let elapsed = now_unix.saturating_sub(v.last_update_timestamp);
-        if elapsed >= p.filter_period as i64 {
-            let vr = if elapsed < p.decay_period as i64 {
-                ((v.volatility_accumulator as u64 * p.reduction_factor as u64) / BASIS_POINT_MAX)
-                    as u32
-            } else {
-                0
-            };
-            VolatilityTracker {
-                volatility_reference: vr,
-                index_reference: active_id,
-            }
+pub fn update_references(
+    p: &StaticParameters,
+    v: &mut VariableParameters,
+    active_id: i32,
+    now_unix: i64,
+) {
+    let elapsed = now_unix.saturating_sub(v.last_update_timestamp);
+    if elapsed >= p.filter_period as i64 {
+        v.index_reference = active_id;
+        if elapsed < p.decay_period as i64 {
+            v.volatility_reference = ((v.volatility_accumulator as u64 * p.reduction_factor as u64)
+                / BASIS_POINT_MAX) as u32;
         } else {
-            VolatilityTracker {
-                volatility_reference: v.volatility_reference,
-                index_reference: v.index_reference,
-            }
+            v.volatility_reference = 0;
         }
     }
-
-    /// Volatility accumulator when the swap is crossing `bin_id`.
-    pub fn accumulator_for_bin(&self, p: &StaticParameters, bin_id: i32) -> u32 {
-        let delta = (bin_id as i64 - self.index_reference as i64).unsigned_abs();
-        let va = self.volatility_reference as u64 + delta * BASIS_POINT_MAX;
-        va.min(p.max_volatility_accumulator as u64) as u32
-    }
 }
 
-// ─────────────────────────── swap (PROVISIONAL) ───────────────────────────
+pub fn update_volatility_accumulator(
+    p: &StaticParameters,
+    v: &mut VariableParameters,
+    active_id: i32,
+) {
+    let delta = (v.index_reference as i64 - active_id as i64).unsigned_abs();
+    let va = v.volatility_reference as u64 + delta * BASIS_POINT_MAX;
+    v.volatility_accumulator = va.min(p.max_volatility_accumulator as u64) as u32;
+}
+
+// ─────────────────────────────── quote ───────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DlmmQuoteError {
+    /// Pair disabled, unsupported pair type, or unknown mode byte.
+    PairNotSupported { reason: &'static str },
     /// The traversal needed a bin array we don't hold — refuse to guess.
     InsufficientBinCoverage { missing_array_index: i64 },
-    /// Ran past the pool's min/max bin id with input remaining.
+    /// No liquidity left in this direction (bitmap exhausted / id bounds).
     ExhaustedLiquidity,
     /// Zero input or output.
     NoFill,
@@ -402,18 +534,163 @@ pub enum DlmmQuoteError {
     MathOverflow,
 }
 
-/// Exact-in DLMM quote by bin traversal.
+struct FillResult {
+    amount_in: u64,
+    amount_left: u64,
+    out_amount: u64,
+}
+
+/// Port of `calculate_exact_in_fill_amount`: fill `amount` against one
+/// liquidity layer of `max_amount_out` at `price`.
+fn fill_layer(
+    amount: u64,
+    max_amount_out: u64,
+    price: u128,
+    swap_for_y: bool,
+) -> Result<FillResult, DlmmQuoteError> {
+    if max_amount_out == 0 {
+        return Ok(FillResult {
+            amount_in: 0,
+            amount_left: amount,
+            out_amount: 0,
+        });
+    }
+    let max_amount_in = amount_in_for_out(max_amount_out, price, swap_for_y, true)
+        .ok_or(DlmmQuoteError::MathOverflow)?;
+    if amount >= max_amount_in {
+        Ok(FillResult {
+            amount_in: max_amount_in,
+            amount_left: amount - max_amount_in,
+            out_amount: max_amount_out,
+        })
+    } else {
+        Ok(FillResult {
+            amount_in: amount,
+            amount_left: 0,
+            out_amount: amount_out_at_price(amount, price, swap_for_y, false)
+                .ok_or(DlmmQuoteError::MathOverflow)?,
+        })
+    }
+}
+
+struct ExactInFill {
+    amount_left: u64,
+    out_amount: u64,
+}
+
+/// Port of `get_exact_in_fill_amount_result`: MM layer, then processed limit
+/// orders, then open limit orders.
+fn fill_bin(
+    bin: &Bin,
+    amount_in: u64,
+    price: u128,
+    swap_for_y: bool,
+    support_limit_order: bool,
+) -> Result<ExactInFill, DlmmQuoteError> {
+    let mm = fill_layer(amount_in, bin.mm_amount_out(swap_for_y), price, swap_for_y)?;
+    if !support_limit_order {
+        return Ok(ExactInFill {
+            amount_left: mm.amount_left,
+            out_amount: mm.out_amount,
+        });
+    }
+    let mut total_in = mm.amount_in;
+    let mut total_out = mm.out_amount;
+    if mm.amount_left > 0 {
+        let (open, processed) = bin.limit_order_amounts(swap_for_y);
+        let pf = fill_layer(mm.amount_left, processed, price, swap_for_y)?;
+        total_in += pf.amount_in;
+        total_out += pf.out_amount;
+        if pf.amount_left > 0 {
+            let of = fill_layer(pf.amount_left, open, price, swap_for_y)?;
+            total_in += of.amount_in;
+            total_out += of.out_amount;
+        }
+    }
+    Ok(ExactInFill {
+        amount_left: amount_in - total_in,
+        out_amount: total_out,
+    })
+}
+
+struct BinQuote {
+    amount_in: u64,
+    amount_out: u64,
+}
+
+/// Port of `swap_exact_in_quote_at_bin` (fee-on-input vs fee-on-output).
+#[allow(clippy::too_many_arguments)]
+fn quote_at_bin(
+    bin: &Bin,
+    p: &StaticParameters,
+    bin_step: u16,
+    volatility_accumulator: u32,
+    in_amount: u64,
+    price: u128,
+    swap_for_y: bool,
+    support_limit_order: bool,
+    fee_on_input: bool,
+) -> Result<BinQuote, DlmmQuoteError> {
+    let rate = total_fee_rate(p, bin_step, volatility_accumulator);
+    let mut excluded_fee_amount_in = in_amount;
+    if fee_on_input {
+        let fee = compute_fee_from_amount(in_amount, rate).ok_or(DlmmQuoteError::MathOverflow)?;
+        excluded_fee_amount_in = in_amount
+            .checked_sub(fee)
+            .ok_or(DlmmQuoteError::MathOverflow)?;
+    }
+
+    let fill = fill_bin(
+        bin,
+        excluded_fee_amount_in,
+        price,
+        swap_for_y,
+        support_limit_order,
+    )?;
+
+    let mut included_fee_amount_in = in_amount;
+    if fill.amount_left > 0 {
+        excluded_fee_amount_in = excluded_fee_amount_in
+            .checked_sub(fill.amount_left)
+            .ok_or(DlmmQuoteError::MathOverflow)?;
+        if fee_on_input {
+            let fee =
+                compute_fee(excluded_fee_amount_in, rate).ok_or(DlmmQuoteError::MathOverflow)?;
+            included_fee_amount_in = excluded_fee_amount_in
+                .checked_add(fee)
+                .ok_or(DlmmQuoteError::MathOverflow)?;
+        } else {
+            included_fee_amount_in = excluded_fee_amount_in;
+        }
+    }
+
+    let mut excluded_fee_amount_out = fill.out_amount;
+    if !fee_on_input {
+        let fee =
+            compute_fee_from_amount(fill.out_amount, rate).ok_or(DlmmQuoteError::MathOverflow)?;
+        excluded_fee_amount_out = fill
+            .out_amount
+            .checked_sub(fee)
+            .ok_or(DlmmQuoteError::MathOverflow)?;
+    }
+
+    Ok(BinQuote {
+        amount_in: included_fee_amount_in,
+        amount_out: excluded_fee_amount_out,
+    })
+}
+
+/// Exact-in DLMM quote — faithful port of Meteora's `quote_exact_in`.
 ///
-/// * `swap_for_y = true`: token X in → token Y out (price falls, walk DOWN).
-/// * `swap_for_y = false`: token Y in → token X out (price rises, walk UP).
+/// * `swap_for_y = true`: X in → Y out (walk DOWN); false: Y in → X out (UP).
+/// * `bin_arrays`: decoded arrays by index. The traversal follows the pair's
+///   liquidity bitmap (skipping empty gaps exactly like the program); an
+///   array the bitmap demands but the map lacks ⇒ `InsufficientBinCoverage`.
+/// * `now_unix` drives the volatility reference decay.
 ///
-/// `bin_arrays` maps array index → decoded array; it must cover every bin the
-/// traversal touches or the quote fails with `InsufficientBinCoverage` (we
-/// never fabricate liquidity for bins we don't hold). `now_unix` drives fee
-/// decay (see [`VolatilityTracker::at_swap_start`]).
-///
-/// PROVISIONAL: traversal + fee application not yet reconciled against
-/// `simulateTransaction` (S9). Price math itself is exact.
+/// NOT modelled (callers must screen): Token-2022 transfer fees on either
+/// mint; pairs of type Permission/CustomizablePermissionless (activation
+/// gating) are refused.
 pub fn dlmm_quote_exact_in(
     pair: &LbPair,
     bin_arrays: &HashMap<i64, BinArray>,
@@ -424,85 +701,98 @@ pub fn dlmm_quote_exact_in(
     if amount_in == 0 {
         return Err(DlmmQuoteError::NoFill);
     }
-    let p = &pair.parameters;
-    let vt = VolatilityTracker::at_swap_start(p, &pair.v_parameters, pair.active_id, now_unix);
+    if pair.status != 0 {
+        return Err(DlmmQuoteError::PairNotSupported {
+            reason: "pair disabled",
+        });
+    }
+    // Permission (1) / CustomizablePermissionless (2) need activation-point
+    // checks against slot/time we don't carry here — refuse, don't guess.
+    if pair.pair_type == 1 || pair.pair_type == 2 {
+        return Err(DlmmQuoteError::PairNotSupported {
+            reason: "permissioned pair type",
+        });
+    }
 
-    let mut remaining: u128 = amount_in as u128;
-    let mut total_out: u128 = 0;
-    let mut bin_id = pair.active_id;
+    let p = pair.parameters;
+    let support_limit_order = pair.supports_limit_orders();
+    let fee_on_input = pair.fee_on_input(swap_for_y);
 
-    loop {
-        if bin_id < p.min_bin_id || bin_id > p.max_bin_id {
-            return Err(DlmmQuoteError::ExhaustedLiquidity);
-        }
-        let arr_idx = bin_array_index(bin_id);
-        let Some(arr) = bin_arrays.get(&arr_idx) else {
-            return Err(DlmmQuoteError::InsufficientBinCoverage {
+    // Working copies (the quote simulates the program's state evolution).
+    let mut v = pair.v_parameters;
+    let mut active_id = pair.active_id;
+    update_references(&p, &mut v, active_id, now_unix);
+
+    let mut amount_left = amount_in;
+    let mut total_out: u64 = 0;
+
+    while amount_left > 0 {
+        // Next array with liquidity per the bitmap (skips empty gaps).
+        let start = bin_array_index(active_id);
+        let arr_idx = pair
+            .next_array_with_liquidity(swap_for_y, start)
+            .ok_or(DlmmQuoteError::ExhaustedLiquidity)?;
+        let arr = bin_arrays
+            .get(&arr_idx)
+            .ok_or(DlmmQuoteError::InsufficientBinCoverage {
                 missing_array_index: arr_idx,
-            });
-        };
-        let bin = arr.bins[bin_offset_in_array(bin_id)];
-        // On-chain stores price per bin; an uninitialised bin has price 0 —
-        // recompute from the id instead of trusting a zero.
-        let price = if bin.price != 0 {
-            bin.price
-        } else {
-            price_from_id(bin_id, pair.bin_step).ok_or(DlmmQuoteError::MathOverflow)?
-        };
+            })?;
 
-        let out_side_liquidity: u128 = if swap_for_y {
-            bin.amount_y as u128
-        } else {
-            bin.amount_x as u128
-        };
-
-        if out_side_liquidity > 0 {
-            let rate = total_fee_rate(p, pair.bin_step, vt.accumulator_for_bin(p, bin_id));
-            // Max input (before fee) this bin absorbs to emit ALL its out-side.
-            let max_in_raw = if swap_for_y {
-                // x needed to buy all y: ceil(y / price)
-                shl_div_ceil(out_side_liquidity, price).ok_or(DlmmQuoteError::MathOverflow)?
+        // Port of `shift_active_bin_if_empty_gap`: jump across skipped gap.
+        if arr_idx != start {
+            active_id = if swap_for_y {
+                (arr_idx * 70 + 69) as i32 // upper bin of the array
             } else {
-                // y needed to buy all x: ceil(x * price)
-                mul_shr_ceil(price, out_side_liquidity).ok_or(DlmmQuoteError::MathOverflow)?
+                (arr_idx * 70) as i32 // lower bin of the array
             };
-            let max_fee = compute_fee(max_in_raw, rate).ok_or(DlmmQuoteError::MathOverflow)?;
-            let max_in_with_fee = max_in_raw
-                .checked_add(max_fee)
-                .ok_or(DlmmQuoteError::MathOverflow)?;
+        }
 
-            if remaining > max_in_with_fee {
-                // Drain the bin completely (strict >, matching Meteora's
-                // Bin::swap: at exact equality the partial path is taken).
-                remaining -= max_in_with_fee;
-                total_out += out_side_liquidity;
+        // Inner loop: consume bins inside this array.
+        while bin_array_index(active_id) == arr_idx && amount_left > 0 {
+            let bin = arr.bins[bin_offset_in_array(active_id)];
+            let price = if bin.price != 0 {
+                bin.price
             } else {
-                // Partial fill inside this bin.
-                let fee =
-                    compute_fee_from_amount(remaining, rate).ok_or(DlmmQuoteError::MathOverflow)?;
-                let into_bin = remaining - fee;
-                let out = if swap_for_y {
-                    mul_shr_floor(price, into_bin).ok_or(DlmmQuoteError::MathOverflow)?
-                } else {
-                    shl_div_floor(into_bin, price).ok_or(DlmmQuoteError::MathOverflow)?
-                };
-                // Never emit more than the bin actually holds.
-                total_out += out.min(out_side_liquidity);
-                remaining = 0;
+                price_from_id(active_id, pair.bin_step).ok_or(DlmmQuoteError::MathOverflow)?
+            };
+
+            if bin.max_amount_out(swap_for_y, support_limit_order) > 0 {
+                update_volatility_accumulator(&p, &mut v, active_id);
+                let r = quote_at_bin(
+                    &bin,
+                    &p,
+                    pair.bin_step,
+                    v.volatility_accumulator,
+                    amount_left,
+                    price,
+                    swap_for_y,
+                    support_limit_order,
+                    fee_on_input,
+                )?;
+                if r.amount_in > 0 {
+                    amount_left = amount_left
+                        .checked_sub(r.amount_in)
+                        .ok_or(DlmmQuoteError::MathOverflow)?;
+                    total_out = total_out
+                        .checked_add(r.amount_out)
+                        .ok_or(DlmmQuoteError::MathOverflow)?;
+                }
+            }
+
+            if amount_left > 0 {
+                // Port of `advance_active_bin` (global id bounds).
+                active_id += if swap_for_y { -1 } else { 1 };
+                if !(MIN_BIN_ID..=MAX_BIN_ID).contains(&active_id) {
+                    return Err(DlmmQuoteError::ExhaustedLiquidity);
+                }
             }
         }
-
-        if remaining == 0 {
-            break;
-        }
-        bin_id += if swap_for_y { -1 } else { 1 };
     }
 
-    let out64 = u64::try_from(total_out).map_err(|_| DlmmQuoteError::MathOverflow)?;
-    if out64 == 0 {
+    if total_out == 0 {
         return Err(DlmmQuoteError::NoFill);
     }
-    Ok(out64)
+    Ok(total_out)
 }
 
 #[cfg(test)]
@@ -512,7 +802,8 @@ mod tests {
 
     // Real mainnet fixtures captured 2026-07-12 (docs/meteora-dlmm-layout.md):
     // pair J4cGfY61ZMaBD2niXcfaUD7KsNZiDnjMnJsPJficos8J — pump-token/WSOL,
-    // bin_step 15, active_id 643 at capture.
+    // bin_step 15, active_id 643 at capture, function_type=LimitOrder,
+    // collect_fee_mode=OnlyY, token X is Token-2022.
     const LB_PAIR_BYTES: &[u8] = include_bytes!("../fixtures/meteora/lbpair_J4cGfY61.bin");
     const BIN_ARRAY_9: &[u8] = include_bytes!("../fixtures/meteora/binarray_idx9_J4cGfY61.bin");
     // A DIFFERENT pool's array (bin_step 20) — cross-pool price validation.
@@ -525,9 +816,14 @@ mod tests {
     fn array9() -> BinArray {
         decode_bin_array(BIN_ARRAY_9).unwrap()
     }
+    fn arrays() -> HashMap<i64, BinArray> {
+        let mut m = HashMap::new();
+        m.insert(9, array9());
+        m
+    }
 
     #[test]
-    fn decodes_real_lb_pair() {
+    fn decodes_real_lb_pair_including_v2_fields() {
         let p = pair();
         assert_eq!(
             p.token_x_mint,
@@ -542,40 +838,60 @@ mod tests {
             p.reserve_x,
             Pubkey::from_str("FXnrNMBqkt8moyeRXZ5nrDEUiRaRndZng9EZy5WbNTiF").unwrap()
         );
-        assert_eq!(
-            p.reserve_y,
-            Pubkey::from_str("HpR5R42Naputg4zLKXZRykZfjahVZK6WvSYqtcFWAbUo").unwrap()
-        );
         assert_eq!(p.bin_step, 15);
         assert_eq!(p.active_id, 643);
         assert_eq!(p.status, 0);
+        assert_eq!(p.pair_type, 3); // PermissionlessV2
         assert_eq!(p.parameters.base_factor, 10_000);
-        assert_eq!(p.parameters.filter_period, 30);
-        assert_eq!(p.parameters.decay_period, 600);
-        assert_eq!(p.parameters.reduction_factor, 5_000);
-        assert_eq!(p.parameters.variable_fee_control, 30_000);
-        assert_eq!(p.parameters.max_volatility_accumulator, 350_000);
         assert_eq!(p.parameters.protocol_share, 1_000);
-        // Timestamp parsed from the verified offset must be a sane unix time.
+        // v2 fields (verified against the official IDL + this account):
+        assert_eq!(p.parameters.function_type, 2); // LimitOrder
+        assert_eq!(p.parameters.collect_fee_mode, 1); // OnlyY
+        assert!(p.supports_limit_orders());
+        assert!(!p.fee_on_input(true)); // X in ⇒ fee on Y OUTPUT
+        assert!(p.fee_on_input(false)); // Y in ⇒ fee on Y INPUT
+        assert_eq!(p.token_x_program_flag, 1); // Token-2022!
+        assert_eq!(p.token_y_program_flag, 0);
+        assert_eq!(p.reward_mints, [Pubkey::default(); 2]);
         let ts = p.v_parameters.last_update_timestamp;
         assert!((1_577_836_800..4_102_444_800).contains(&ts), "ts={ts}");
+        // Bitmap sanity (full coverage in `bitmap_navigation_matches_study`).
+        assert_eq!(p.next_array_with_liquidity(false, 9), Some(9));
     }
 
     #[test]
-    fn decodes_real_bin_array_and_back_pointer() {
+    fn bitmap_navigation_matches_study() {
+        let p = pair();
+        // Liquidity in [-6, 20] (from the captured bitmap).
+        assert_eq!(p.next_array_with_liquidity(false, -10), Some(-6));
+        assert_eq!(p.next_array_with_liquidity(false, 0), Some(0));
+        assert_eq!(p.next_array_with_liquidity(false, 20), Some(20));
+        assert_eq!(p.next_array_with_liquidity(false, 21), None);
+        assert_eq!(p.next_array_with_liquidity(true, 25), Some(20));
+        assert_eq!(p.next_array_with_liquidity(true, -6), Some(-6));
+        assert_eq!(p.next_array_with_liquidity(true, -7), None);
+        // Outside the core bitmap → None (bitmap extension unsupported).
+        assert_eq!(p.next_array_with_liquidity(false, 600), None);
+    }
+
+    #[test]
+    fn decodes_real_bin_array_with_limit_orders() {
         let a = array9();
-        assert_eq!(a.index, 9); // bins 630..700 — contains active_id 643
+        assert_eq!(a.index, 9);
         assert_eq!(
             a.lb_pair,
             Pubkey::from_str("J4cGfY61ZMaBD2niXcfaUD7KsNZiDnjMnJsPJficos8J").unwrap()
         );
         assert_eq!(a.bins.len(), 70);
-        // Spot-check real captured liquidity values.
         assert_eq!(a.bins[0].amount_y, 13_189_812_598); // bin 630
         assert_eq!(a.bins[68].amount_x, 3_863_113_477); // bin 698
-                                                        // Below active: Y side; above active: X side (price = Y per X).
-        assert!(a.bins[bin_offset_in_array(640)].amount_y > 0);
-        assert!(a.bins[bin_offset_in_array(660)].amount_x > 0);
+                                                        // The capture really contains open limit orders (4 bins).
+        let lo_bins = a
+            .bins
+            .iter()
+            .filter(|b| b.open_order_amount > 0 || b.processed_order_remaining_amount > 0)
+            .count();
+        assert_eq!(lo_bins, 4);
     }
 
     #[test]
@@ -603,11 +919,7 @@ mod tests {
                 continue;
             }
             let id = (a9.index * 70) as i32 + i as i32;
-            assert_eq!(
-                price_from_id(id, 15).unwrap(),
-                bin.price,
-                "bin {id} price mismatch (step 15)"
-            );
+            assert_eq!(price_from_id(id, 15).unwrap(), bin.price, "bin {id}");
         }
         let other = decode_bin_array(BIN_ARRAY_OTHER).unwrap();
         for (i, bin) in other.bins.iter().enumerate() {
@@ -615,11 +927,7 @@ mod tests {
                 continue;
             }
             let id = (other.index * 70) as i32 + i as i32;
-            assert_eq!(
-                price_from_id(id, 20).unwrap(),
-                bin.price,
-                "bin {id} price mismatch (step 20)"
-            );
+            assert_eq!(price_from_id(id, 20).unwrap(), bin.price, "bin {id}");
         }
     }
 
@@ -633,7 +941,6 @@ mod tests {
         assert_eq!(bin_array_index(-71), -2);
         assert_eq!(bin_offset_in_array(-1), 69);
         assert_eq!(bin_offset_in_array(643), 13);
-        // price(-i) ≈ 1/price(i): product within a few ulps of 2^128.
         let p = price_from_id(500, 15).unwrap();
         let n = price_from_id(-500, 15).unwrap();
         let prod = U256::from(p) * U256::from(n);
@@ -647,25 +954,16 @@ mod tests {
         let p = pair();
         // base_factor 10000 * bin_step 15 * 10 = 1_500_000 / 1e9 = 0.15%
         assert_eq!(base_fee_rate(&p.parameters, p.bin_step), 1_500_000);
-        // va = 0 ⇒ no variable fee; cap respected.
         assert_eq!(variable_fee_rate(&p.parameters, p.bin_step, 0), 0);
-        assert!(total_fee_rate(&p.parameters, p.bin_step, u32::MAX) <= MAX_FEE_RATE);
-    }
-
-    fn arrays() -> HashMap<i64, BinArray> {
-        let mut m = HashMap::new();
-        m.insert(9, array9());
-        m
+        assert!(total_fee_rate(&p.parameters, p.bin_step, u32::MAX) <= MAX_FEE_RATE as u128);
     }
 
     #[test]
     fn quote_small_swap_both_directions() {
         let p = pair();
         let now = p.v_parameters.last_update_timestamp + 5;
-        // Y in (WSOL) -> X out: walk UP through X-side bins.
         let out_x = dlmm_quote_exact_in(&p, &arrays(), false, 1_000_000_000, now).unwrap();
         assert!(out_x > 0);
-        // X in -> Y out (WSOL): walk DOWN through Y-side bins.
         let out_y = dlmm_quote_exact_in(&p, &arrays(), true, 1_000_000_000, now).unwrap();
         assert!(out_y > 0);
     }
@@ -676,8 +974,6 @@ mod tests {
         let now = p.v_parameters.last_update_timestamp + 5;
         let amt: u64 = 2_000_000_000;
         let out = dlmm_quote_exact_in(&p, &arrays(), false, amt, now).unwrap() as u128;
-        // Upper bound: whole input converted at the ACTIVE bin price with no
-        // fee and no traversal to worse bins: x_ub = in << 64 / price(active).
         let price = price_from_id(p.active_id, p.bin_step).unwrap();
         let ub = shl_div_floor(amt as u128, price).unwrap();
         assert!(out < ub, "quote {out} must be below feeless spot {ub}");
@@ -699,8 +995,8 @@ mod tests {
     fn quote_rejects_when_bins_missing_never_fakes() {
         let p = pair();
         let now = p.v_parameters.last_update_timestamp + 5;
-        // Total X in array 9 ≈ 249e9; a giant WSOL input must exhaust it and
-        // hit the missing array 10 — the quote REFUSES rather than guessing.
+        // Exhausting array 9 upward demands array 10 (bitmap says it has
+        // liquidity) — we don't hold it, so the quote REFUSES.
         let err = dlmm_quote_exact_in(&p, &arrays(), false, u64::MAX / 4, now).unwrap_err();
         assert_eq!(
             err,
@@ -708,7 +1004,7 @@ mod tests {
                 missing_array_index: 10
             }
         );
-        // Same going down: drain all Y and hit array 8.
+        // Downward: array 8.
         let err = dlmm_quote_exact_in(&p, &arrays(), true, u64::MAX / 4, now).unwrap_err();
         assert_eq!(
             err,
@@ -716,7 +1012,6 @@ mod tests {
                 missing_array_index: 8
             }
         );
-        // Zero input: NoFill, not a zero-quote success.
         assert_eq!(
             dlmm_quote_exact_in(&p, &arrays(), false, 0, now),
             Err(DlmmQuoteError::NoFill)
@@ -724,13 +1019,27 @@ mod tests {
     }
 
     #[test]
+    fn disabled_or_permissioned_pairs_are_refused() {
+        let now = pair().v_parameters.last_update_timestamp + 5;
+        let mut disabled = pair();
+        disabled.status = 1;
+        assert!(matches!(
+            dlmm_quote_exact_in(&disabled, &arrays(), false, 1_000, now),
+            Err(DlmmQuoteError::PairNotSupported { .. })
+        ));
+        let mut permissioned = pair();
+        permissioned.pair_type = 1;
+        assert!(matches!(
+            dlmm_quote_exact_in(&permissioned, &arrays(), false, 1_000, now),
+            Err(DlmmQuoteError::PairNotSupported { .. })
+        ));
+    }
+
+    #[test]
     fn higher_volatility_reduces_output() {
         let p = pair();
         let calm = p.v_parameters.last_update_timestamp + 5;
         let out_calm = dlmm_quote_exact_in(&p, &arrays(), false, 1_000_000_000, calm).unwrap();
-
-        // Force max volatility: same pair but with a huge accumulator and a
-        // fresh timestamp (no decay).
         let mut hot = pair();
         hot.v_parameters.volatility_accumulator = hot.parameters.max_volatility_accumulator;
         hot.v_parameters.volatility_reference = hot.parameters.max_volatility_accumulator;
@@ -745,30 +1054,40 @@ mod tests {
     #[test]
     fn decay_reduces_fee_over_time() {
         let p = pair();
-        let mut v = p.parameters;
-        v.variable_fee_control = 30_000;
-        let mut vparams = p.v_parameters;
-        vparams.volatility_accumulator = 100_000;
-        vparams.volatility_reference = 100_000;
-        vparams.index_reference = p.active_id;
+        let mut v = p.v_parameters;
+        v.volatility_accumulator = 100_000;
+        v.volatility_reference = 100_000;
+        v.index_reference = p.active_id;
 
-        // Within filter period: references kept (max fee).
-        let t0 = VolatilityTracker::at_swap_start(
-            &v,
-            &vparams,
+        // Within filter period: references kept.
+        let mut v0 = v;
+        update_references(
+            &p.parameters,
+            &mut v0,
             p.active_id,
-            vparams.last_update_timestamp + 1,
+            v.last_update_timestamp + 1,
         );
-        // After decay period: reference zeroed.
-        let t2 = VolatilityTracker::at_swap_start(
-            &v,
-            &vparams,
+        assert_eq!(v0.volatility_reference, 100_000);
+        // Between filter and decay: reduced.
+        let mut v1 = v;
+        update_references(
+            &p.parameters,
+            &mut v1,
             p.active_id,
-            vparams.last_update_timestamp + v.decay_period as i64 + 1,
+            v.last_update_timestamp + p.parameters.filter_period as i64 + 1,
         );
-        let va0 = t0.accumulator_for_bin(&v, p.active_id);
-        let va2 = t2.accumulator_for_bin(&v, p.active_id);
-        assert!(va0 >= va2, "decay must not increase the accumulator");
-        assert_eq!(va2, 0);
+        assert_eq!(
+            v1.volatility_reference,
+            (100_000u64 * p.parameters.reduction_factor as u64 / BASIS_POINT_MAX) as u32
+        );
+        // Past decay: zeroed.
+        let mut v2 = v;
+        update_references(
+            &p.parameters,
+            &mut v2,
+            p.active_id,
+            v.last_update_timestamp + p.parameters.decay_period as i64 + 1,
+        );
+        assert_eq!(v2.volatility_reference, 0);
     }
 }

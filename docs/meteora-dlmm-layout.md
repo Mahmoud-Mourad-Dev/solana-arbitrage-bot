@@ -94,31 +94,50 @@ inverse-base algorithm is required.
 - A missing bin array ⇒ `InsufficientBinCoverage { missing_array_index }` —
   the quote refuses; it never fabricates liquidity.
 
-## Live parity results (2026-07-12, snapshot-ring method)
+## Live parity results
 
-Method: continuous single-slot snapshots (pair + reserves + 3 bin arrays)
-every ~0.9 s; each observed real swap whose `preTokenBalances` equal a stored
-snapshot's reserves is quoted through the **Rust** `dlmm_quote_exact_in` (via
-`dlmm_quote_cli`) and compared to the actual output:
+Method (snapshot-ring): continuous single-slot snapshots (pair + reserves +
+bin arrays) every ~0.9 s; each observed real swap whose `preTokenBalances`
+equal a stored snapshot's reserves is quoted through the **Rust**
+`dlmm_quote_exact_in` (via `dlmm_quote_cli`) and compared to the actual
+output.
 
-| tx | direction | in | actual out | rust quote | delta |
+**Round 1 (classic MM-only model):** two single-bin fills −1 unit; one
+bin-crossing fill **+679 OVERestimate** → model rejected.
+
+Root cause (from Meteora's own `commons/src/quote.rs` + the official IDL
+`idls/dlmm.json`): the current DLMM has **per-bin limit orders**
+(`open_order_amount`, `processed_order_remaining_amount`,
+`limit_order_ask_side` — inside the same 144-byte Bin) and
+**collect-fee-mode** (`InputOnly` / `OnlyY`, i.e. fee side depends on pool
+AND direction). Our fixture pool is `function_type=LimitOrder`,
+`collect_fee_mode=OnlyY`, `pair_type=PermissionlessV2`, and its X mint is
+**Token-2022**.
+
+**Round 2 (S4b: faithful port of the official `quote_exact_in` — fill layers
+MM → processed orders → open orders, fee-mode aware, bitmap-based array
+traversal, official volatility updates):**
+
+| tx | direction | in | actual out | rust quote | verdict |
 |---|---|---|---|---|---|
-| 3DDvKEow… | X→Y | 21,000,000 | 61,234,513 | 61,234,512 | **−1** (conservative) |
-| 5gTNbQkY… | X→Y | 11,073,244 | 32,288,795 | 32,288,794 | **−1** (conservative) |
-| 3nXyLp1v… | X→Y | 404,578,430 | 1,179,721,384 | 1,179,722,063 | **+679 (+0.0006%) OVER** |
+| 3aPMsWR9… | X→Y | 133,794 | 386,063 | 386,063 | **EXACT** |
+| 4NxWhj5c… | Y→X | 1,288,416,783 | 445,173,279 | 445,173,279 | **EXACT** |
+| 4dMqun99… | Y→X | 855,218,732 | 295,494,946 | 295,494,946 | **EXACT** |
+| zXxZFjS4… | Y→X | 1,125,791,688 | 388,983,272 | 388,983,272 | **EXACT** |
+| 3BFLgUaw… | Y→X | 50,958,710 | 17,580,743 | 17,580,743 | **EXACT** |
+| 2PMgoBWF… | Y→X | 1,707,400,184 | 589,052,695 | 589,052,695 | **EXACT** |
 
-## Known gaps (S4b blockers — from Meteora's own `commons/src/quote.rs`)
-- **Per-bin LIMIT ORDER fills**: current DLMM bins can carry open limit
-  orders (`open_order_amount`, `processed_order_remaining_amount`) that add
-  out-side liquidity; our model is MM-liquidity-only. Likely source of the
-  +679 crossing overestimate.
-- **collect-fee-mode**: some pools charge the fee on INPUT instead of output
-  (`fee_on_input` in the official quote path); not modelled.
-- Drain-boundary condition aligned to Meteora's strict `>` (fixed).
-- Token-2022 transfer-fee interaction; bitmap/extension parsing (discovery).
+**6/6 exact, both directions, zero overestimates** — on a live pool
+exercising limit orders, OnlyY fee mode, and a Token-2022 X mint.
 
-**Consequence (enforced by policy):** the DLMM quote is NEAR-PARITY, not
-exact. Until the full port of Meteora's official off-chain quote passes live
-parity with zero overestimates, it must not gate real sizing decisions.
-Reference sources vendored for the port: `MeteoraAg/dlmm-sdk/commons/src/`
-(quote.rs, extensions/{bin,lb_pair}.rs, math/*).
+## Remaining screening duties (discovery-time, not quote-time)
+- **Token-2022 transfer fees are NOT modelled in the quote**: discovery must
+  parse the mint and reject (or model) mints with a non-zero transfer fee.
+  (Pump-suffix mints observed so far have none — verify per mint.)
+- Bitmap **extension** account (array indices outside [-512, 511]) is not
+  parsed; such pools are refused via `next_array_with_liquidity → None`.
+- `Permission` / `CustomizablePermissionless` pairs are refused
+  (activation-point gating not carried); `Permissionless`/`PermissionlessV2`
+  quoted.
+- Larger parity sample (incl. multi-array crossings and an `InputOnly` pool)
+  should accumulate in S9 before live eligibility (Gate 2).
