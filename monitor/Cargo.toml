@@ -42,3 +42,7 @@ path = "src/bin/discover_pools.rs"
 [[bin]]
 name = "parity_harness"
 path = "src/bin/parity_harness.rs"
+
+[[bin]]
+name = "dlmm_quote_cli"
+path = "src/bin/dlmm_quote_cli.rs"

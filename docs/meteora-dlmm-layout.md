@@ -94,10 +94,31 @@ inverse-base algorithm is required.
 - A missing bin array ⇒ `InsufficientBinCoverage { missing_array_index }` —
   the quote refuses; it never fabricates liquidity.
 
-## What remains unverified (S9 blockers)
-- Fee application details (on-top vs from-amount split, protocol-share
-  interaction) against a real `simulateTransaction`.
-- Host-chain rounding of partial-bin output at the exact boundary.
-- Token-2022 transfer-fee interaction (pairs using Token-2022 X mints).
-- bin_array_bitmap / bitmap-extension parsing (needed later for discovery of
-  which arrays to fetch; not needed for quoting when arrays are supplied).
+## Live parity results (2026-07-12, snapshot-ring method)
+
+Method: continuous single-slot snapshots (pair + reserves + 3 bin arrays)
+every ~0.9 s; each observed real swap whose `preTokenBalances` equal a stored
+snapshot's reserves is quoted through the **Rust** `dlmm_quote_exact_in` (via
+`dlmm_quote_cli`) and compared to the actual output:
+
+| tx | direction | in | actual out | rust quote | delta |
+|---|---|---|---|---|---|
+| 3DDvKEow… | X→Y | 21,000,000 | 61,234,513 | 61,234,512 | **−1** (conservative) |
+| 5gTNbQkY… | X→Y | 11,073,244 | 32,288,795 | 32,288,794 | **−1** (conservative) |
+| 3nXyLp1v… | X→Y | 404,578,430 | 1,179,721,384 | 1,179,722,063 | **+679 (+0.0006%) OVER** |
+
+## Known gaps (S4b blockers — from Meteora's own `commons/src/quote.rs`)
+- **Per-bin LIMIT ORDER fills**: current DLMM bins can carry open limit
+  orders (`open_order_amount`, `processed_order_remaining_amount`) that add
+  out-side liquidity; our model is MM-liquidity-only. Likely source of the
+  +679 crossing overestimate.
+- **collect-fee-mode**: some pools charge the fee on INPUT instead of output
+  (`fee_on_input` in the official quote path); not modelled.
+- Drain-boundary condition aligned to Meteora's strict `>` (fixed).
+- Token-2022 transfer-fee interaction; bitmap/extension parsing (discovery).
+
+**Consequence (enforced by policy):** the DLMM quote is NEAR-PARITY, not
+exact. Until the full port of Meteora's official off-chain quote passes live
+parity with zero overestimates, it must not gate real sizing decisions.
+Reference sources vendored for the port: `MeteoraAg/dlmm-sdk/commons/src/`
+(quote.rs, extensions/{bin,lb_pair}.rs, math/*).

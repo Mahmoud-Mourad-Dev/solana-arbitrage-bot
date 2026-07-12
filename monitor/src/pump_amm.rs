@@ -5,11 +5,12 @@
 //! chain-verified in `docs/pump-amm-layout.md`. Reserves are the live SPL
 //! balances of the pool's two vaults (like Raydium), NOT stored in the struct.
 //!
-//! Quote status: the constant-product math is standard fee-on-input and reuses
-//! [`crate::math::cpmm_amount_out`] (U256, never overestimates). Whether
-//! PumpSwap's protocol/creator fees exactly match a fee-on-input reduction is
-//! **PROVISIONAL until the S9 simulation-parity harness reconciles it against a
-//! real swap.** Until then this must not be called "exact".
+//! Quote status: **EXACT for creator-less pools** — the two-direction fee
+//! formulas were reverse-engineered from and verified against 29/29 real
+//! executed mainnet swaps (byte-exact, balance-delta method), with 8 of those
+//! embedded below as regression vectors. Pools with a non-zero `coin_creator`
+//! are REFUSED (`UnverifiedFeeSchedule`) until their schedule gets the same
+//! treatment.
 
 use crate::math::cpmm_amount_out;
 use solana_sdk::pubkey::Pubkey;
@@ -24,11 +25,21 @@ pub const POOL_DISCRIMINATOR: [u8; 8] = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6
 pub const IX_BUY_DISCRIMINATOR: [u8; 8] = [0x66, 0x06, 0x3d, 0x12, 0x01, 0xda, 0xeb, 0xea];
 pub const IX_SELL_DISCRIMINATOR: [u8; 8] = [0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad];
 
-/// Verified fee schedule (from on-chain GlobalConfig): lp 20 + protocol 5.
-pub const LP_FEE_BPS: u64 = 20;
-pub const PROTOCOL_FEE_BPS: u64 = 5;
-/// Total fee (bps) for a pool with no coin-creator fee.
-pub const BASE_TOTAL_FEE_BPS: u64 = LP_FEE_BPS + PROTOCOL_FEE_BPS;
+/// Fee schedule, EMPIRICALLY PINNED against 29/29 real mainnet swaps on a
+/// creator-less pool (see docs/pump-amm-layout.md, parity study 2026-07-12).
+/// PumpSwap fees are always charged on the QUOTE side:
+///
+/// * base in → quote out: `out = gross − ceil(gross·25/10⁴)` where
+///   `gross = floor(x·Rq/(Rb+x))` — 25 bps off the quote OUTPUT.
+/// * quote in → base out: `C = floor(U·10⁴/(10⁴+30))`, `out = floor(C·Rb/(Rq+C))`
+///   — a 30 bps ON-TOP markup divided out of the quote INPUT (25 bps retained
+///   in the vault, 5 bps transferred out as 2 × 2.5 bps).
+///
+/// These constants are verified ONLY for pools with `coin_creator == default`.
+/// Pools with a creator fee are REFUSED (`UnverifiedFeeSchedule`) until their
+/// schedule is parity-verified the same way.
+pub const QUOTE_OUT_FEE_BPS: u64 = 25;
+pub const QUOTE_IN_MARKUP_BPS: u64 = 30;
 
 /// Minimum size of a Pool account (through `lp_supply`). Real accounts observed
 /// at 301 bytes; we require at least the fields we parse.
@@ -58,15 +69,11 @@ pub enum PumpDecodeError {
 }
 
 impl PumpAmmPool {
-    /// Total swap fee (bps): 25 base, plus the creator fee only when the pool
-    /// actually has a coin-creator set. `creator_fee_bps` comes from config /
-    /// GlobalConfig (it is dynamic on-chain); callers pass the current value.
-    pub fn total_fee_bps(&self, creator_fee_bps: u64) -> u64 {
-        if self.coin_creator == Pubkey::default() {
-            BASE_TOTAL_FEE_BPS
-        } else {
-            BASE_TOTAL_FEE_BPS + creator_fee_bps
-        }
+    /// True when the empirically-verified fee schedule applies to this pool
+    /// (no coin-creator fee). Pools with a creator are refused until their
+    /// schedule is parity-verified — never guessed.
+    pub fn fee_schedule_verified(&self) -> bool {
+        self.coin_creator == Pubkey::default()
     }
 
     /// True when WSOL is one side of the pair (our WSOL-anchored strategy).
@@ -127,37 +134,47 @@ pub enum PumpQuoteError {
     EmptyReserves,
     /// The trade produces no output at this size.
     NoFill,
+    /// Pool has a coin-creator fee whose schedule we have NOT parity-verified.
+    /// Refuse rather than guess.
+    UnverifiedFeeSchedule,
 }
 
-/// Integer constant-product quote for one PumpSwap leg.
+/// Exact-in PumpSwap quote — the EXACT integer formulas reverse-engineered
+/// from real executed swaps (29/29 byte-exact; see module fee docs).
 ///
-/// Reserves are the live vault balances (`base_reserve` = balance of
-/// `base_vault`, `quote_reserve` = balance of `quote_vault`). Direction is
-/// derived from `input_mint`. Fee is applied on the input via
-/// [`cpmm_amount_out`] (floor rounding, never overestimates).
-///
-/// PROVISIONAL: see module docs — not validated against `simulateTransaction`
-/// yet, so callers must not treat the result as exact.
+/// Reserves are the live vault balances pre-swap. Direction is derived from
+/// `input_mint` relative to the pool's base/quote mints (WSOL can be EITHER
+/// side — never assume).
 pub fn pump_quote(
     pool: &PumpAmmPool,
     input_mint: &Pubkey,
     amount_in: u64,
     base_reserve: u64,
     quote_reserve: u64,
-    total_fee_bps: u64,
 ) -> Result<u64, PumpQuoteError> {
+    if !pool.fee_schedule_verified() {
+        return Err(PumpQuoteError::UnverifiedFeeSchedule);
+    }
     if base_reserve == 0 || quote_reserve == 0 {
         return Err(PumpQuoteError::EmptyReserves);
     }
-    let (reserve_in, reserve_out) = if input_mint == &pool.base_mint {
-        (base_reserve, quote_reserve)
+    if amount_in == 0 {
+        return Err(PumpQuoteError::NoFill);
+    }
+    let out = if input_mint == &pool.base_mint {
+        // base in → quote out: fee-less CPMM, then 25 bps (ceil) OFF the output.
+        let gross = cpmm_amount_out(amount_in, base_reserve, quote_reserve, 0, 10_000);
+        let fee = (gross as u128 * QUOTE_OUT_FEE_BPS as u128).div_ceil(10_000) as u64;
+        gross.saturating_sub(fee)
     } else if input_mint == &pool.quote_mint {
-        (quote_reserve, base_reserve)
+        // quote in → base out: divide the 30 bps on-top markup out of the
+        // input (floor), then fee-less CPMM (floor).
+        let effective =
+            ((amount_in as u128 * 10_000) / (10_000 + QUOTE_IN_MARKUP_BPS as u128)) as u64;
+        cpmm_amount_out(effective, quote_reserve, base_reserve, 0, 10_000)
     } else {
         return Err(PumpQuoteError::WrongMint);
     };
-    // fee-on-input CPMM: numerator = fee bps, denominator = 10_000.
-    let out = cpmm_amount_out(amount_in, reserve_in, reserve_out, total_fee_bps, 10_000);
     if out == 0 {
         return Err(PumpQuoteError::NoFill);
     }
@@ -206,7 +223,7 @@ mod tests {
         assert_eq!(p.lp_supply, 3_871_692_136_521);
         // No coin-creator on this pool ⇒ base 25 bps fee.
         assert_eq!(p.coin_creator, Pubkey::default());
-        assert_eq!(p.total_fee_bps(30), BASE_TOTAL_FEE_BPS);
+        assert!(p.fee_schedule_verified());
     }
 
     #[test]
@@ -231,40 +248,115 @@ mod tests {
         ));
     }
 
+    /// REAL executed mainnet swaps on the fixture pool (2026-07-12), extracted
+    /// via the balance-delta method: pre-swap vault reserves, user input,
+    /// actual user output. The quote must reproduce every output EXACTLY.
+    /// Direction A: base(WSOL) in → quote out.
+    const REAL_SWAPS_BASE_IN: &[(u64, u64, u64, u64)] = &[
+        (
+            501_037_669_936,
+            36_137_094_094_035,
+            924_918_154,
+            66_419_879_719,
+        ), // jwCm9JJR8x2XHZg6
+        (
+            500_974_990_791,
+            36_140_885_655_287,
+            2_058_411_074,
+            147_518_667_713,
+        ), // 5okh17ZAZ6Vx7HCf
+        (
+            498_476_080_737,
+            36_321_608_291_587,
+            2_498_910_054,
+            180_722_636_300,
+        ), // 5zsKkAg1semv75G7
+        (
+            495_067_428_118,
+            36_570_986_090_308,
+            3_613_243_728,
+            264_316_513_239,
+        ), // 2yMUVGHiZbrRNDBx
+    ];
+    /// Direction B: quote in → base(WSOL) out (input = user-paid amount).
+    const REAL_SWAPS_QUOTE_IN: &[(u64, u64, u64, u64)] = &[
+        (
+            503_033_401_865,
+            35_993_366_987_574,
+            143_798_790_804,
+            1_995_731_929,
+        ), // 3kkoznSysy2yJPWk
+        (
+            498_680_671_846,
+            36_306_669_577_069,
+            14_946_165_249,
+            204_591_109,
+        ), // 3hJNWmbWLrDNYeo1
+        (
+            497_566_348_172,
+            36_386_859_309_007,
+            184_218_615_108,
+            2_498_920_054,
+        ), // 5K1x88FtnKYbWFpU
+        (
+            500_118_171_012,
+            36_200_350_223_881,
+            264_233_946_107,
+            3_613_253_728,
+        ), // 4P3hju5oZ1pW1W2p
+    ];
+
     #[test]
-    fn quote_both_directions_match_cpmm() {
+    fn quote_matches_real_swaps_exactly_base_in() {
         let p = decode_real();
-        let (rb, rq) = (250_722_271_472u64, 66_578_440_584_105u64); // real reserves
-                                                                    // base (WSOL) in -> quote out
-        let out_bq = pump_quote(&p, &p.base_mint, 1_000_000_000, rb, rq, 25).unwrap();
-        assert_eq!(out_bq, cpmm_amount_out(1_000_000_000, rb, rq, 25, 10_000));
-        // quote in -> base (WSOL) out
-        let out_qb = pump_quote(&p, &p.quote_mint, 1_000_000_000, rb, rq, 25).unwrap();
-        assert_eq!(out_qb, cpmm_amount_out(1_000_000_000, rq, rb, 25, 10_000));
-        assert!(out_bq > 0 && out_qb > 0);
+        for &(rb, rq, x, expected) in REAL_SWAPS_BASE_IN {
+            let out = pump_quote(&p, &p.base_mint, x, rb, rq).unwrap();
+            assert_eq!(out, expected, "base-in swap must be byte-exact");
+        }
     }
 
     #[test]
-    fn quote_rejects_wrong_mint_and_empty_reserves() {
+    fn quote_matches_real_swaps_exactly_quote_in() {
+        let p = decode_real();
+        for &(rb, rq, u, expected) in REAL_SWAPS_QUOTE_IN {
+            let out = pump_quote(&p, &p.quote_mint, u, rb, rq).unwrap();
+            assert_eq!(out, expected, "quote-in swap must be byte-exact");
+        }
+    }
+
+    #[test]
+    fn quote_rejects_wrong_mint_empty_reserves_and_unverified_creator() {
         let p = decode_real();
         assert_eq!(
-            pump_quote(&p, &Pubkey::default(), 1_000, 10, 10, 25),
+            pump_quote(&p, &Pubkey::default(), 1_000, 10, 10),
             Err(PumpQuoteError::WrongMint)
         );
         assert_eq!(
-            pump_quote(&p, &p.base_mint, 1_000, 0, 10, 25),
+            pump_quote(&p, &p.base_mint, 1_000, 0, 10),
             Err(PumpQuoteError::EmptyReserves)
+        );
+        // A pool WITH a creator fee must refuse until parity-verified.
+        let mut with_creator = p.clone();
+        with_creator.coin_creator = Pubkey::new_unique();
+        assert_eq!(
+            pump_quote(&with_creator, &with_creator.base_mint, 1_000, 10, 10),
+            Err(PumpQuoteError::UnverifiedFeeSchedule)
         );
     }
 
     #[test]
     fn quote_never_overestimates_output() {
         let p = decode_real();
-        let (rb, rq) = (250_722_271_472u64, 66_578_440_584_105u64);
+        let (rb, rq) = (501_037_669_936u64, 36_137_094_094_035u64);
+        // Base in: below feeless spot.
         let amt = 5_000_000_000u64;
-        let out = pump_quote(&p, &p.base_mint, amt, rb, rq, 25).unwrap();
-        // Upper bound: zero-fee, zero-slippage spot = amt * rq / rb.
+        let out = pump_quote(&p, &p.base_mint, amt, rb, rq).unwrap();
         let ideal = (amt as u128 * rq as u128 / rb as u128) as u64;
         assert!(out < ideal, "fee+slippage must reduce output below spot");
+        // Quote in: below feeless spot too.
+        let amt_q = 100_000_000_000u64;
+        let out_b = pump_quote(&p, &p.quote_mint, amt_q, rb, rq).unwrap();
+        let ideal_b = (amt_q as u128 * rb as u128 / rq as u128) as u64;
+        assert!(out_b < ideal_b);
     }
 }

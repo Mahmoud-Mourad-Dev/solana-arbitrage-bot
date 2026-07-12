@@ -8,8 +8,13 @@
 //!   the pair; bin-array `lb_pair` back-pointer and index range check out).
 //! - **`price_from_id`: EXACT** — byte-identical to the on-chain stored bin
 //!   prices for 140 bins across two pools with different bin steps.
-//! - **Swap traversal + fee application: PROVISIONAL** until the S9
-//!   simulation-parity harness reconciles it against `simulateTransaction`.
+//! - **Swap traversal + fee application: NEAR-PARITY, not exact.** Live
+//!   parity vs 3 real swaps (2026-07-12): two single-bin fills −1 unit
+//!   (conservative), one bin-crossing fill **+679 (+0.0006%) OVERestimate**.
+//!   Known gaps vs Meteora's current `commons/src/quote.rs`: per-bin limit
+//!   order fills and collect-fee-mode (fee-on-input pools) are NOT modelled
+//!   here. Until the full port (S4b) lands and re-passes live parity, treat
+//!   this quote as approximate and do not use it for final go/no-go sizing.
 //!
 //! Financial invariants: integer-only; output rounding is always DOWN and fee
 //! rounding always UP (never overestimate output); missing bin arrays produce
@@ -466,8 +471,9 @@ pub fn dlmm_quote_exact_in(
                 .checked_add(max_fee)
                 .ok_or(DlmmQuoteError::MathOverflow)?;
 
-            if remaining >= max_in_with_fee {
-                // Drain the bin completely.
+            if remaining > max_in_with_fee {
+                // Drain the bin completely (strict >, matching Meteora's
+                // Bin::swap: at exact equality the partial path is taken).
                 remaining -= max_in_with_fee;
                 total_out += out_side_liquidity;
             } else {

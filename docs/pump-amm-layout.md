@@ -50,17 +50,33 @@ Base total (no creator) = **25 bps**.
 - buy  = `66063d1201daebea`
 - sell = `33e685a4017f83ad`
 
-## Swap math — **PROVISIONAL until S9 simulation parity**
-Constant product `base_reserve * quote_reserve = k`. This crate implements the
-standard fee-on-input integer AMM:
-```
-in_after_fee = amount_in * (10_000 - total_fee_bps) / 10_000   (floor)
-amount_out   = in_after_fee * reserve_out / (reserve_in + in_after_fee)  (floor)
-```
-Rounding is floor (never overestimates output). Zero/insufficient reserves ⇒
-structured rejection, never a fabricated quote.
+## Swap math — **EXACT for creator-less pools (parity-verified 2026-07-12)**
 
-**Not yet verified:** whether PumpSwap takes protocol/creator fees as separate
-SOL transfers vs. reducing the effective input (which changes k), and the exact
-creator-fee handling. Do NOT call this math "exact" until the S9 harness
-reconciles it against `simulateTransaction` on real swaps.
+Empirically pinned by the balance-delta method against **29/29 real executed
+mainnet swaps** on the fixture pool (17 base-in + 12 quote-in, all byte-exact;
+8 embedded as regression vectors in `pump_amm.rs`). The initial fee-on-input
+guess was WRONG in both directions — this is why parity-first mattered.
+
+**PumpSwap fees are always charged on the QUOTE side:**
+
+*Direction A — base in (x) → quote out:*
+```
+gross = floor(x · Rq / (Rb + x))          (fee-less CPMM)
+out   = gross − ceil(gross · 25 / 10⁴)    (25 bps off the quote OUTPUT)
+```
+The whole 25 bps is retained in the quote vault (no separate transfers).
+
+*Direction B — quote in (U, user-paid) → base out:*
+```
+C   = floor(U · 10⁴ / (10⁴ + 30))         (30 bps ON-TOP divided out)
+out = floor(C · Rb / (Rq + C))            (fee-less CPMM)
+```
+Of the 30 bps markup: ~25 bps stays in the quote vault, ~5 bps of C leaves as
+two ≈2.5 bps transfers to protocol-fee recipients. Note the asymmetry
+(25 out vs 30 in) — measured, not assumed.
+
+**Scope limits (enforced in code):** verified only for pools with
+`coin_creator == default`. Pools with a creator fee return
+`UnverifiedFeeSchedule` — their schedule (and any market-cap-tiered "fees v2"
+variants) must pass the same 100% parity bar before being quoted. The
+`coin_creator` offset itself is still provisional (needs a non-zero sample).
