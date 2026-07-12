@@ -15,6 +15,7 @@ pub mod consistency;
 pub mod discovery;
 pub mod geyser;
 pub mod math;
+pub mod meteora_dlmm;
 pub mod parsers;
 pub mod pipeline;
 pub mod pump_amm;
