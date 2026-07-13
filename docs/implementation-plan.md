@@ -1,5 +1,43 @@
 # Implementation Plan (Phase 0 → Live)
 
+## Progress snapshot (2026-07-13)
+
+Done and committed (each fmt+clippy-clean, tests green; ~119 tests):
+- **S1 modes** — observe/replay/simulate/live, default observe; live gated by
+  flag + `.live-armed` marker.
+- **S2 shared cost model** — one integer `CostModel` used by monitor AND
+  executor (kills the split-tip defect).
+- **S3 Pump AMM** — parser + quote verified vs mainnet. SELL exact for ALL
+  pools; BUY exact for creator-less pools; creator-pool BUY refused (rounding
+  unresolved). Fee model pinned from on-chain swap EVENTS.
+- **S4 + S4b Meteora DLMM** — parsers + exact Q64.64 price (140/140 bins) +
+  faithful port of Meteora's official quote (limit orders, collect-fee-mode,
+  bitmap traversal). **Live parity 6/6 EXACT, both directions.**
+- **S5 discovery** — dynamic Pump∩Meteora scan + Token-2022 mint-safety
+  screen + ranked restart cache. Live: 430k+110k pools → 9,975 both-venue →
+  ~205 above a 2-SOL floor → 203 safe.
+- **S6 route engine** — two-leg WSOL→token→WSOL, both directions, typed
+  reject taxonomy, shared cost model.
+- **S7 optimizer** — two-stage grid+ternary; beats brute force; capacity-aware.
+- **S9 (essence)** — live simulation-parity proven for both quote engines.
+- **S12 + S12b observe-markets** — live scanner, single-slot-consistent per
+  market, full reject taxonomy, JSON reports. **Never submits.**
+
+Pending: S8 (formal replay harness — essence covered live), S10 (on-chain
+`execute_*` + intermediate-minimum check, sim-only), S11 (tx builder
+hardening), S13 (24–72h observe run → gates), S14 (small-cap live — BLOCKED on
+explicit approval). Known precision gap: creator-pool Pump BUY rounding (limits
+pump-first routes; ~98% of pools are creator pools, usable as the SELL leg).
+
+Runbook:
+```
+cargo run -p arb-monitor --release --bin discover-markets      # refresh cache
+cargo run -p arb-monitor --release --bin observe-markets -- --once   # one scan
+cargo run -p arb-monitor --release --bin observe-markets       # loop (OBS_INTERVAL_SECS)
+```
+
+---
+
 Ordered, small, verifiable stages. **Default mode stays `observe`; live stays
 disabled** until every acceptance gate passes and you explicitly approve.
 Each stage: explain → smallest change → fmt → clippy → unit → integration →
