@@ -1,31 +1,43 @@
-//! `observe-markets` — S12 observe mode.
+//! `observe-markets` — S13 observe mode with confirmation + evidence.
 //!
-//! Loads the discovery cache, snapshots live state for each market at a single
-//! slot, builds both WSOL→token→WSOL routes (Pump-first and Meteora-first),
-//! optimizes the size with the two-stage optimizer, and reports candidates +
-//! a full rejection taxonomy. **It NEVER builds, signs, or submits anything.**
+//! Loads the discovery cache and, each cycle, snapshots every market's quote
+//! inputs in ONE getMultipleAccounts (single slot), builds both
+//! WSOL→token→WSOL routes, optimizes size, and for each candidate performs an
+//! immediate fresh single-slot CONFIRMATION (optionally a second one) to test
+//! whether the signal survives. Every candidate is streamed to JSONL with full
+//! economics, cost breakdown, latencies, slot, and confirmation results. At the
+//! end it writes an aggregated + sensitivity report.
+//!
+//! **It NEVER builds, signs, simulates, or submits a transaction.** It is a
+//! monitor. A candidate is a signal, not a fill.
 //!
 //! Usage: cargo run -p arb-monitor --bin observe-markets [--cache PATH] [--once]
-//! Env: RPC_ENDPOINT, MODE (must not be `live` here — this binary can't submit
-//!      regardless), OBS_MIN_NET_LAMPORTS (default 0), OBS_MAX_SOL (default 20),
-//!      OBS_INTERVAL_SECS (default 15).
+//! Env: RPC_ENDPOINT (secrets are redacted from all logs), MODE,
+//!      OBS_MIN_NET_LAMPORTS (default 0), OBS_MAX_SOL (default 20),
+//!      OBS_INTERVAL_SECS (default 15), OBS_DURATION_SECS (default 86400),
+//!      OBS_DOUBLE_CONFIRM (default true), OBS_OUT_DIR (default reports/observe).
 
 use anyhow::{Context, Result};
 use arb_common::cost::{CostModel, ExecutionPayment};
 use arb_common::mode::Mode;
-use arb_monitor::market_discovery::{DiscoveryCache, WSOL_MINT};
+use arb_monitor::market_discovery::{DiscoveredMarket, DiscoveryCache, WSOL_MINT};
 use arb_monitor::meteora_dlmm::{self, decode_bin_array, decode_lb_pair, BinArray};
+use arb_monitor::observe_report::{
+    aggregate, default_scenarios, redact_secrets, sensitivity, CandidateRecord, Confirmation,
+    CostBreakdown,
+};
 use arb_monitor::optimizer::{optimize, SizeGrid};
 use arb_monitor::pump_amm::{self, decode_pump_pool};
-use arb_monitor::route_engine::{Candidate, Leg, Route, RouteReject};
+use arb_monitor::route_engine::{Leg, Route, RouteReject};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::account::Account;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::sysvar::clock::ID as CLOCK_ID;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::io::Write;
 use std::str::FromStr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 fn now_ms() -> u64 {
@@ -39,7 +51,6 @@ fn token_amount(acc: &Account) -> Option<u64> {
     (acc.data.len() >= 72).then(|| u64::from_le_bytes(acc.data[64..72].try_into().unwrap()))
 }
 
-/// Bin-array PDA: seeds [b"bin_array", pair, index_le_i64].
 fn bin_array_pda(pair: &Pubkey, index: i64, program: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(
         &[b"bin_array", pair.as_ref(), &index.to_le_bytes()],
@@ -48,25 +59,143 @@ fn bin_array_pda(pair: &Pubkey, index: i64, program: &Pubkey) -> Pubkey {
     .0
 }
 
-#[derive(Default)]
-struct RejectTally {
-    topology: u64,
-    leg1: u64,
-    leg2: u64,
-    non_positive: u64,
-    below_net: u64,
-    no_state: u64,
-    dead_route: u64,
+fn git_commit() -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn tally(t: &mut RejectTally, r: &RouteReject) {
-    match r {
-        RouteReject::TopologyMismatch => t.topology += 1,
-        RouteReject::Leg1(_) => t.leg1 += 1,
-        RouteReject::Leg2(_) => t.leg2 += 1,
-        RouteReject::NonPositiveGross => t.non_positive += 1,
-        RouteReject::BelowNet { .. } => t.below_net += 1,
+/// Programs + WSOL, resolved once.
+struct Ctx {
+    pump_prog: Pubkey,
+    dlmm_prog: Pubkey,
+    wsol: Pubkey,
+}
+
+/// The two venue legs for a market at a single slot.
+struct Snapshot {
+    slot: u64,
+    pump_leg: Leg,
+    dlmm_leg: Leg,
+}
+
+/// Fetch a market's quote inputs at ONE slot (pair-probe to pick the bin-array
+/// window, then a single getMultipleAccounts). Returns None with a reason on
+/// any missing/invalid state — never a guess.
+async fn fetch_snapshot(
+    rpc: &RpcClient,
+    ctx: &Ctx,
+    m: &DiscoveredMarket,
+    now_unix: i64,
+    secrets: &[&str],
+) -> Result<Snapshot, &'static str> {
+    let (Ok(pool_k), Ok(bv), Ok(qv), Ok(pair_k)) = (
+        Pubkey::from_str(&m.pump_pool),
+        Pubkey::from_str(&m.pump_base_vault),
+        Pubkey::from_str(&m.pump_quote_vault),
+        Pubkey::from_str(&m.dlmm_pair),
+    ) else {
+        return Err("bad_key");
+    };
+    let active_id = match rpc.get_account(&pair_k).await {
+        Ok(a) if a.owner == ctx.dlmm_prog => match decode_lb_pair(&a.data) {
+            Ok(p) => p.active_id,
+            Err(_) => return Err("pair_decode"),
+        },
+        Ok(_) => return Err("pair_owner"),
+        Err(e) => {
+            warn!(error = %redact_secrets(&e.to_string(), secrets), "pair probe failed");
+            return Err("pair_fetch");
+        }
+    };
+    let aidx = (active_id as i64).div_euclid(70);
+    let idxs: Vec<i64> = (aidx - 2..=aidx + 2).collect();
+    let mut keys = vec![pool_k, bv, qv, pair_k];
+    keys.extend(
+        idxs.iter()
+            .map(|&i| bin_array_pda(&pair_k, i, &ctx.dlmm_prog)),
+    );
+
+    let resp = match rpc
+        .get_multiple_accounts_with_commitment(&keys, CommitmentConfig::confirmed())
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(error = %redact_secrets(&e.to_string(), secrets), "snapshot fetch failed");
+            return Err("snapshot_fetch");
+        }
+    };
+    let slot = resp.context.slot;
+    let v = resp.value;
+    let (Some(pool_acc), Some(bv_acc), Some(qv_acc), Some(pair_acc)) = (&v[0], &v[1], &v[2], &v[3])
+    else {
+        return Err("missing_account");
+    };
+    if pool_acc.owner != ctx.pump_prog || pair_acc.owner != ctx.dlmm_prog {
+        return Err("wrong_owner");
     }
+    let (Ok(pool), Ok(pair)) = (
+        decode_pump_pool(&pool_acc.data),
+        decode_lb_pair(&pair_acc.data),
+    ) else {
+        return Err("decode");
+    };
+    let (Some(base_reserve), Some(quote_reserve)) = (token_amount(bv_acc), token_amount(qv_acc))
+    else {
+        return Err("vault_decode");
+    };
+    let mut arrays: HashMap<i64, BinArray> = HashMap::new();
+    for (i, acc) in idxs.iter().zip(&v[4..]) {
+        if let Some(acc) = acc {
+            if acc.owner == ctx.dlmm_prog {
+                if let Ok(ba) = decode_bin_array(&acc.data) {
+                    if ba.lb_pair == pair_k {
+                        arrays.insert(*i, ba);
+                    }
+                }
+            }
+        }
+    }
+    Ok(Snapshot {
+        slot,
+        pump_leg: Leg::Pump {
+            pool,
+            base_reserve,
+            quote_reserve,
+        },
+        dlmm_leg: Leg::Meteora {
+            pair,
+            arrays,
+            now_unix,
+        },
+    })
+}
+
+fn routes_for(snap: Snapshot) -> [(&'static str, Route); 2] {
+    let Snapshot {
+        pump_leg, dlmm_leg, ..
+    } = snap;
+    [
+        (
+            "pump->meteora",
+            Route {
+                leg1: pump_leg.clone(),
+                leg2: dlmm_leg.clone(),
+            },
+        ),
+        (
+            "meteora->pump",
+            Route {
+                leg1: dlmm_leg,
+                leg2: pump_leg,
+            },
+        ),
+    ]
 }
 
 #[tokio::main]
@@ -86,40 +215,51 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| "markets.generated.json".to_string());
     let once = args.iter().any(|a| a == "--once");
 
-    // Mode is informational here; observe-markets physically cannot submit.
     let mode: Mode = std::env::var("MODE")
         .ok()
         .and_then(|m| m.parse().ok())
         .unwrap_or(Mode::Observe);
-    let min_net: u64 = std::env::var("OBS_MIN_NET_LAMPORTS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let min_net: u64 = env_u64("OBS_MIN_NET_LAMPORTS", 0);
     let max_sol: f64 = std::env::var("OBS_MAX_SOL")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(20.0);
-    let interval = Duration::from_secs(
-        std::env::var("OBS_INTERVAL_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(15),
-    );
+    let interval = Duration::from_secs(env_u64("OBS_INTERVAL_SECS", 15));
+    let duration = Duration::from_secs(env_u64("OBS_DURATION_SECS", 86_400));
+    let double_confirm = std::env::var("OBS_DOUBLE_CONFIRM")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(true);
+    let out_dir = std::env::var("OBS_OUT_DIR").unwrap_or_else(|_| "reports/observe".to_string());
+    std::fs::create_dir_all(&out_dir).ok();
 
     let rpc_url = std::env::var("RPC_ENDPOINT").context("RPC_ENDPOINT required")?;
-    let rpc = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
-    let dlmm_prog = Pubkey::from_str(meteora_dlmm::DLMM_PROGRAM_ID)?;
-    let pump_prog = Pubkey::from_str(pump_amm::PUMP_AMM_PROGRAM_ID)?;
-    let wsol = Pubkey::from_str(WSOL_MINT)?;
+    let wss_url = std::env::var("RPC_WSS_ENDPOINT").unwrap_or_default();
+    let secrets: Vec<&str> = [rpc_url.as_str(), wss_url.as_str()]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let rpc = RpcClient::new_with_commitment(rpc_url.clone(), CommitmentConfig::confirmed());
+    let ctx = Ctx {
+        pump_prog: Pubkey::from_str(pump_amm::PUMP_AMM_PROGRAM_ID)?,
+        dlmm_prog: Pubkey::from_str(meteora_dlmm::DLMM_PROGRAM_ID)?,
+        wsol: Pubkey::from_str(WSOL_MINT)?,
+    };
 
     let raw = std::fs::read_to_string(&cache_path)
         .with_context(|| format!("read discovery cache {cache_path}"))?;
     let cache = DiscoveryCache::from_json(&raw)
         .context("cache version mismatch — re-run discover-markets")?;
+
+    let run_id = now_ms();
+    let jsonl_path = format!("{out_dir}/candidates-{run_id}.jsonl");
+    let mut jsonl = std::fs::File::create(&jsonl_path)?;
     info!(
         markets = cache.markets.len(),
         mode = %mode,
-        "observe-markets starting (NEVER submits)"
+        commit = %git_commit(),
+        jsonl = %jsonl_path,
+        "observe-markets S13 starting (NEVER submits)"
     );
 
     let cost = CostModel {
@@ -140,251 +280,293 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
-    loop {
-        let started = std::time::Instant::now();
-        let mut candidates: Vec<(String, &'static str, Candidate)> = Vec::new();
-        let mut rejects = RejectTally::default();
-        let mut best_below: Option<(String, i128, u64)> = None; // token, net, gross
+    let mut all_records: Vec<CandidateRecord> = Vec::new();
+    let mut scan_secs: Vec<f64> = Vec::new();
+    let mut reject_totals: BTreeMap<String, u64> = BTreeMap::new();
+    let run_start = Instant::now();
 
-        // Cluster time for DLMM volatility decay.
+    loop {
+        let cycle_start = Instant::now();
+        let mut cycle_candidates = 0usize;
+
         let now_unix = match rpc.get_account(&CLOCK_ID).await {
             Ok(a) if a.data.len() >= 40 => i64::from_le_bytes(a.data[32..40].try_into().unwrap()),
             _ => (now_ms() / 1000) as i64,
         };
 
         for m in &cache.markets {
-            let (Ok(pump_pool_k), Ok(pump_bv), Ok(pump_qv), Ok(dlmm_pair_k)) = (
-                Pubkey::from_str(&m.pump_pool),
-                Pubkey::from_str(&m.pump_base_vault),
-                Pubkey::from_str(&m.pump_quote_vault),
-                Pubkey::from_str(&m.dlmm_pair),
-            ) else {
-                rejects.no_state += 1;
-                continue;
-            };
-
-            // Cheap probe of the pair ONLY to choose the bin-array window; the
-            // actual quote reads the pair again in the atomic snapshot below,
-            // so a stale active_id here can at worst under-cover (safe reject),
-            // never fabricate liquidity.
-            let active_id = match rpc.get_account(&dlmm_pair_k).await {
-                Ok(a) if a.owner == dlmm_prog => match decode_lb_pair(&a.data) {
-                    Ok(p) => p.active_id,
-                    Err(_) => {
-                        rejects.no_state += 1;
-                        continue;
-                    }
-                },
-                _ => {
-                    rejects.no_state += 1;
+            let mkt_start = Instant::now();
+            let rpc_t0 = Instant::now();
+            let snap = match fetch_snapshot(&rpc, &ctx, m, now_unix, &secrets).await {
+                Ok(s) => s,
+                Err(reason) => {
+                    *reject_totals
+                        .entry(format!("no_state:{reason}"))
+                        .or_default() += 1;
                     continue;
                 }
             };
-            let aidx = (active_id as i64).div_euclid(70);
-            let idxs: Vec<i64> = (aidx - 2..=aidx + 2).collect();
-            let arr_keys: Vec<Pubkey> = idxs
-                .iter()
-                .map(|&i| bin_array_pda(&dlmm_pair_k, i, &dlmm_prog))
-                .collect();
+            let rpc_latency_ms = rpc_t0.elapsed().as_millis() as u64;
+            let context_slot = snap.slot;
 
-            // SINGLE-SLOT snapshot: EVERY account the quote consumes in ONE
-            // getMultipleAccounts (≤9 keys ⇒ one RPC round ⇒ one slot). This is
-            // what kills the cross-slot phantom-profit class.
-            let mut snap_keys = vec![pump_pool_k, pump_bv, pump_qv, dlmm_pair_k];
-            snap_keys.extend_from_slice(&arr_keys);
-            let snap = match rpc.get_multiple_accounts(&snap_keys).await {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(token = %m.token_mint, error = %e, "snapshot fetch failed");
-                    rejects.no_state += 1;
+            for (label, route) in routes_for(snap) {
+                if route.token_mint(&ctx.wsol).is_none() {
+                    *reject_totals.entry("topology".into()).or_default() += 1;
                     continue;
                 }
-            };
-            let (Some(pool_acc), Some(bv_acc), Some(qv_acc), Some(pair_acc)) =
-                (&snap[0], &snap[1], &snap[2], &snap[3])
-            else {
-                rejects.no_state += 1;
-                continue;
-            };
-            if pool_acc.owner != pump_prog || pair_acc.owner != dlmm_prog {
-                rejects.no_state += 1;
-                continue;
-            }
-            let (Ok(pool), Ok(pair)) = (
-                decode_pump_pool(&pool_acc.data),
-                decode_lb_pair(&pair_acc.data),
-            ) else {
-                rejects.no_state += 1;
-                continue;
-            };
-            let (Some(base_reserve), Some(quote_reserve)) =
-                (token_amount(bv_acc), token_amount(qv_acc))
-            else {
-                rejects.no_state += 1;
-                continue;
-            };
-            let mut arrays: HashMap<i64, BinArray> = HashMap::new();
-            for (i, acc) in idxs.iter().zip(&snap[4..]) {
-                if let Some(acc) = acc {
-                    if acc.owner == dlmm_prog {
-                        if let Ok(ba) = decode_bin_array(&acc.data) {
-                            if ba.lb_pair == dlmm_pair_k {
-                                arrays.insert(*i, ba);
-                            }
-                        }
-                    }
-                }
-            }
-
-            let pump_leg = Leg::Pump {
-                pool: pool.clone(),
-                base_reserve,
-                quote_reserve,
-            };
-            let dlmm_leg = Leg::Meteora {
-                pair: pair.clone(),
-                arrays,
-                now_unix,
-            };
-
-            // Both directions.
-            let routes = [
-                (
-                    "pump->meteora",
-                    Route {
-                        leg1: pump_leg.clone(),
-                        leg2: dlmm_leg.clone(),
-                    },
-                ),
-                (
-                    "meteora->pump",
-                    Route {
-                        leg1: dlmm_leg,
-                        leg2: pump_leg,
-                    },
-                ),
-            ];
-            for (label, route) in routes {
-                if route.token_mint(&wsol).is_none() {
-                    rejects.topology += 1;
+                let Some(c) = optimize(&route, &ctx.wsol, &cost, &grid) else {
+                    // Classify why (probe at a mid size).
+                    let key = match route.evaluate(&ctx.wsol, grid.max / 10, &cost) {
+                        Err(RouteReject::Leg1(_)) => "leg1",
+                        Err(RouteReject::Leg2(_)) => "leg2",
+                        Err(RouteReject::NonPositiveGross) => "non_positive_gross",
+                        Err(RouteReject::BelowNet { .. }) => "below_net",
+                        Err(RouteReject::TopologyMismatch) => "topology",
+                        Ok(_) => "below_net", // optimize None but a size works ⇒ under floor
+                    };
+                    *reject_totals.entry(key.into()).or_default() += 1;
                     continue;
-                }
-                match optimize(&route, &wsol, &cost, &grid) {
-                    Some(c) => candidates.push((m.token_mint.clone(), label, c)),
-                    None => {
-                        // Probe once at a mid size to classify WHY.
-                        match route.evaluate(&wsol, grid.max / 10, &cost) {
-                            Err(r) => {
-                                if matches!(r, RouteReject::Leg1(_) | RouteReject::Leg2(_)) {
-                                    // structural vs capacity already handled in
-                                    // optimize; count as leg reject / dead.
-                                    rejects.dead_route += 1;
-                                }
-                                tally(&mut rejects, &r);
-                            }
-                            Ok(c) => {
-                                // optimize returned None but a size works — must
-                                // be below the net floor at the probe size.
-                                if best_below
-                                    .as_ref()
-                                    .map(|b| c.net_profit > b.1)
-                                    .unwrap_or(true)
-                                {
-                                    best_below =
-                                        Some((m.token_mint.clone(), c.net_profit, c.gross_profit));
-                                }
-                            }
-                        }
-                    }
-                }
+                };
+                cycle_candidates += 1;
+                let detected_at_ms = now_ms();
+
+                // pump/meteora fee attribution depends on which leg is which.
+                let (pump_fee, meteora_fee) = if label == "pump->meteora" {
+                    (c.leg1_fee, c.leg2_fee)
+                } else {
+                    (c.leg2_fee, c.leg1_fee)
+                };
+
+                // Immediate fresh single-slot confirmation(s).
+                let confirm1 = confirm(
+                    &rpc,
+                    &ctx,
+                    m,
+                    now_unix,
+                    &secrets,
+                    label,
+                    &cost,
+                    &grid,
+                    detected_at_ms,
+                )
+                .await;
+                let confirm2 = if double_confirm {
+                    Some(
+                        confirm(
+                            &rpc,
+                            &ctx,
+                            m,
+                            now_unix,
+                            &secrets,
+                            label,
+                            &cost,
+                            &grid,
+                            detected_at_ms,
+                        )
+                        .await,
+                    )
+                } else {
+                    None
+                };
+
+                let rec = CandidateRecord {
+                    detected_at_ms,
+                    context_slot,
+                    token_mint: m.token_mint.clone(),
+                    pump_pool: m.pump_pool.clone(),
+                    dlmm_pair: m.dlmm_pair.clone(),
+                    direction: label.to_string(),
+                    amount_in: c.amount_in,
+                    gross_profit: c.gross_profit,
+                    pump_fee,
+                    meteora_fee,
+                    cost: CostBreakdown::from_model(&cost, c.gross_profit),
+                    net_profit: c.net_profit,
+                    rpc_latency_ms,
+                    scan_latency_ms: mkt_start.elapsed().as_millis() as u64,
+                    candidate_age_ms: now_ms().saturating_sub(detected_at_ms),
+                    confirm1: Some(confirm1),
+                    confirm2,
+                };
+                writeln!(jsonl, "{}", serde_json::to_string(&rec)?)?;
+                jsonl.flush().ok();
+                all_records.push(rec);
             }
         }
 
-        candidates.sort_by_key(|(_, _, c)| std::cmp::Reverse(c.net_profit));
-        let report = serde_json::json!({
-            "generated_at_ms": now_ms(),
-            "mode": mode.to_string(),
-            "markets_scanned": cache.markets.len(),
-            "cluster_time": now_unix,
-            "candidates": candidates.iter().map(|(tok, dir, c)| serde_json::json!({
-                "token": tok, "direction": dir,
-                "amount_in_sol": c.amount_in as f64 / 1e9,
-                "gross_profit_lamports": c.gross_profit,
-                "net_profit_lamports": c.net_profit,
-                "wsol_out": c.wsol_out,
-                "token_mid": c.token_mid,
-                "tip_lamports": c.payment,
-            })).collect::<Vec<_>>(),
-            "rejects": {
-                "topology": rejects.topology,
-                "leg1": rejects.leg1,
-                "leg2": rejects.leg2,
-                "non_positive_gross": rejects.non_positive,
-                "below_net_floor": rejects.below_net,
-                "no_live_state": rejects.no_state,
-                "dead_route": rejects.dead_route,
-            },
-            "best_near_miss": best_below.as_ref().map(|(t, net, gross)| serde_json::json!({
-                "token": t, "net_profit_lamports": net, "gross_profit_lamports": gross,
-            })),
-            "scan_secs": started.elapsed().as_secs_f64(),
-            "caveat": "Per-market quote inputs come from ONE atomic getMultipleAccounts \
-                       (single slot), so a candidate is internally consistent. It is still \
-                       a MONITOR signal, not a fill: it is not re-confirmed at submit time \
-                       and does not account for latency/competition. observe-markets never submits.",
-        });
-        let path = format!("observe-report-{}.json", now_ms());
-        std::fs::write(&path, serde_json::to_string_pretty(&report)?)?;
+        let cycle_secs = cycle_start.elapsed().as_secs_f64();
+        scan_secs.push(cycle_secs);
+        let confirmed = all_records
+            .iter()
+            .rev()
+            .take(cycle_candidates)
+            .filter(|r| r.confirmed_once())
+            .count();
+        info!(
+            cycle_secs = format!("{cycle_secs:.1}"),
+            candidates = cycle_candidates,
+            confirmed_this_cycle = confirmed,
+            total_records = all_records.len(),
+            "cycle complete"
+        );
 
-        println!(
-            "\n════════ OBSERVE SCAN ({:.1}s) ════════",
-            started.elapsed().as_secs_f64()
-        );
-        println!("markets scanned:     {}", cache.markets.len());
-        println!(
-            "CANDIDATES (net ≥ {} lamports): {}",
-            min_net,
-            candidates.len()
-        );
-        for (tok, dir, c) in candidates.iter().take(20) {
-            println!(
-                "  ✅ {} {} in={:.3} SOL gross={} net={} tip={}",
-                &tok[..8.min(tok.len())],
-                dir,
-                c.amount_in as f64 / 1e9,
-                c.gross_profit,
-                c.net_profit,
-                c.payment,
-            );
-        }
-        if let Some((t, net, gross)) = &best_below {
-            println!(
-                "best near-miss (below floor): {} net={net} gross={gross}",
-                &t[..8.min(t.len())]
-            );
-        }
-        println!(
-            "rejects: topo={} leg1={} leg2={} nonPos={} belowNet={} noState={} dead={}",
-            rejects.topology,
-            rejects.leg1,
-            rejects.leg2,
-            rejects.non_positive,
-            rejects.below_net,
-            rejects.no_state,
-            rejects.dead_route
-        );
-        println!("report: {path}");
-        if !candidates.is_empty() {
-            println!(
-                "note: candidates are single-slot-consistent MONITOR signals, not \
-                 fills — no submit-time reconfirmation / latency modelled. Never submitted."
-            );
-        }
-
-        if once {
+        if once || run_start.elapsed() >= duration {
             break;
         }
         tokio::time::sleep(interval).await;
     }
+
+    // ── Final report ──────────────────────────────────────────────────
+    let agg = aggregate(&all_records, &scan_secs, reject_totals.clone());
+    let sens = sensitivity(&all_records, &default_scenarios());
+    let scan_median = agg.scan_median_secs;
+    let report = serde_json::json!({
+        "run": {
+            "id": run_id,
+            "commit": git_commit(),
+            "mode": mode.to_string(),
+            "markets": cache.markets.len(),
+            "duration_secs": run_start.elapsed().as_secs(),
+            "cycles": scan_secs.len(),
+            "min_net_lamports": min_net,
+            "max_sol": max_sol,
+            "double_confirm": double_confirm,
+            "note": "observe-only; never builds/simulates/submits a transaction. \
+                     Candidates are single-slot-consistent MONITOR signals.",
+        },
+        "aggregate": agg,
+        "sensitivity": sens,
+        "throughput": {
+            "scan_median_secs": scan_median,
+            "explanation": throughput_verdict(scan_median, agg.persistence_median_ms, agg.single_confirm_survivors),
+        },
+        "acceptance": {
+            "question": "Do profitable signals survive fresh single-slot confirmation and persist long enough to justify building the execution layer?",
+            "single_confirm_survivors": agg.single_confirm_survivors,
+            "double_confirm_survivors": agg.double_confirm_survivors,
+            "persistence_median_ms": agg.persistence_median_ms,
+            "persistence_exceeds_cycle": agg.persistence_exceeds_cycle,
+            "verdict": acceptance_verdict(&agg),
+        },
+        "jsonl_log": jsonl_path,
+    });
+    let report_path = format!("{out_dir}/report-{run_id}.json");
+    std::fs::write(&report_path, serde_json::to_string_pretty(&report)?)?;
+
+    // Compress the report + JSONL (best-effort; gzip is standard on the box).
+    for p in [&report_path, &jsonl_path] {
+        let _ = std::process::Command::new("gzip").args(["-kf", p]).status();
+    }
+
+    println!("\n════════ S13 OBSERVE RUN COMPLETE ════════");
+    println!(
+        "cycles={} raw_signals={} unique={} conf1={} conf2={} persist_median={}ms",
+        agg.scan_cycles,
+        agg.raw_signals,
+        agg.unique_opportunities,
+        agg.single_confirm_survivors,
+        agg.double_confirm_survivors,
+        agg.persistence_median_ms
+    );
+    println!(
+        "scan median {:.1}s → {}",
+        scan_median,
+        throughput_verdict(
+            scan_median,
+            agg.persistence_median_ms,
+            agg.single_confirm_survivors
+        )
+    );
+    println!("sensitivity (confirmed survivors under rising cost):");
+    for s in &sens {
+        println!(
+            "  {:12} survivors={} net_p50={} net_max={}",
+            s.label, s.survivors, s.net_p50, s.net_max
+        );
+    }
+    println!("ACCEPTANCE: {}", acceptance_verdict(&agg));
+    println!("report: {report_path}(.gz)  jsonl: {jsonl_path}(.gz)");
     Ok(())
+}
+
+/// Fresh single-slot re-fetch + re-optimize for one direction; is it still a
+/// candidate netting ≥ 0?
+#[allow(clippy::too_many_arguments)]
+async fn confirm(
+    rpc: &RpcClient,
+    ctx: &Ctx,
+    m: &DiscoveredMarket,
+    now_unix: i64,
+    secrets: &[&str],
+    label: &str,
+    cost: &CostModel,
+    grid: &SizeGrid,
+    detected_at_ms: u64,
+) -> Confirmation {
+    let snap = match fetch_snapshot(rpc, ctx, m, now_unix, secrets).await {
+        Ok(s) => s,
+        Err(_) => {
+            return Confirmation {
+                survived: false,
+                latency_ms: now_ms().saturating_sub(detected_at_ms),
+                ..Default::default()
+            }
+        }
+    };
+    let slot = snap.slot;
+    let route = routes_for(snap)
+        .into_iter()
+        .find(|(l, _)| *l == label)
+        .map(|(_, r)| r)
+        .unwrap();
+    match optimize(&route, &ctx.wsol, cost, grid) {
+        Some(c) if c.net_profit >= 0 => Confirmation {
+            survived: true,
+            context_slot: slot,
+            net_profit: c.net_profit,
+            gross_profit: c.gross_profit,
+            latency_ms: now_ms().saturating_sub(detected_at_ms),
+        },
+        _ => Confirmation {
+            survived: false,
+            context_slot: slot,
+            latency_ms: now_ms().saturating_sub(detected_at_ms),
+            ..Default::default()
+        },
+    }
+}
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+fn throughput_verdict(scan_median: f64, persist_median_ms: u64, survivors: usize) -> String {
+    if survivors == 0 {
+        return "no confirmed survivors — throughput is moot until an edge exists".into();
+    }
+    let persist_s = persist_median_ms as f64 / 1000.0;
+    if persist_s >= scan_median {
+        format!(
+            "median edge persists {persist_s:.0}s ≥ {scan_median:.0}s cycle — a next-cycle actor could plausibly catch it (execution latency still unmodeled)"
+        )
+    } else {
+        format!(
+            "median edge persists {persist_s:.0}s < {scan_median:.0}s cycle — a {scan_median:.0}s scan is too slow to act on the typical edge; faster ingestion (Geyser) would be required"
+        )
+    }
+}
+
+fn acceptance_verdict(agg: &arb_monitor::observe_report::Aggregate) -> String {
+    if agg.single_confirm_survivors == 0 {
+        "NO — zero signals survived fresh single-slot confirmation. Do NOT build the execution layer on this strategy yet.".into()
+    } else if agg.double_confirm_survivors == 0 {
+        "WEAK — some signals confirmed once but none twice; edges are fleeting. Execution layer not justified without faster ingestion.".into()
+    } else if !agg.persistence_exceeds_cycle {
+        "MARGINAL — signals confirm but do not persist a full scan cycle; a 75–98s poll cannot act on them. Reassess with faster ingestion before building execution.".into()
+    } else {
+        "PROMISING — signals survive double confirmation AND persist ≥ one cycle. Worth a deeper look, but still a monitor signal, not proven executable/profitable.".into()
+    }
 }

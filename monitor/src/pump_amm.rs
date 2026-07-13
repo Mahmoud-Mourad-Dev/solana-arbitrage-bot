@@ -206,6 +206,26 @@ pub fn pump_quote(
     base_reserve: u64,
     quote_reserve: u64,
 ) -> Result<u64, PumpQuoteError> {
+    pump_quote_detailed(pool, input_mint, amount_in, base_reserve, quote_reserve).map(|q| q.out)
+}
+
+/// A quote plus its fee attribution, for reporting. `fee` is the total DEX fee
+/// charged on this leg, always denominated in the QUOTE token (PumpSwap charges
+/// on the quote side in both directions).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PumpQuoteDetail {
+    pub out: u64,
+    pub fee: u64,
+}
+
+/// Like [`pump_quote`] but also returns the DEX fee (in quote-token units).
+pub fn pump_quote_detailed(
+    pool: &PumpAmmPool,
+    input_mint: &Pubkey,
+    amount_in: u64,
+    base_reserve: u64,
+    quote_reserve: u64,
+) -> Result<PumpQuoteDetail, PumpQuoteError> {
     if base_reserve == 0 || quote_reserve == 0 {
         return Err(PumpQuoteError::EmptyReserves);
     }
@@ -213,24 +233,29 @@ pub fn pump_quote(
         return Err(PumpQuoteError::NoFill);
     }
     let split = fee_split(pool.has_creator());
-    let out = if input_mint == &pool.base_mint {
+    let (out, fee) = if input_mint == &pool.base_mint {
         // SELL: fee-less CPMM gross, then subtract independently-ceiled fees.
         let gross = cpmm_amount_out(amount_in, base_reserve, quote_reserve, 0, 10_000);
-        gross.saturating_sub(total_fee(gross, split))
+        let fee = total_fee(gross, split);
+        (gross.saturating_sub(fee), fee)
     } else if input_mint == &pool.quote_mint {
         // BUY: exact inversion of the input fee, then fee-less CPMM.
         if pool.has_creator() {
             return Err(PumpQuoteError::CreatorBuyUnverified);
         }
         let effective = effective_buy_input(amount_in, split);
-        cpmm_amount_out(effective, quote_reserve, base_reserve, 0, 10_000)
+        let fee = amount_in.saturating_sub(effective); // on-top fee, quote units
+        (
+            cpmm_amount_out(effective, quote_reserve, base_reserve, 0, 10_000),
+            fee,
+        )
     } else {
         return Err(PumpQuoteError::WrongMint);
     };
     if out == 0 {
         return Err(PumpQuoteError::NoFill);
     }
-    Ok(out)
+    Ok(PumpQuoteDetail { out, fee })
 }
 
 #[cfg(test)]

@@ -628,6 +628,9 @@ fn fill_bin(
 struct BinQuote {
     amount_in: u64,
     amount_out: u64,
+    /// Trading fee charged at this bin (input-token units when fee_on_input,
+    /// else output-token units).
+    fee: u64,
 }
 
 /// Port of `swap_exact_in_quote_at_bin` (fee-on-input vs fee-on-output).
@@ -686,9 +689,15 @@ fn quote_at_bin(
             .ok_or(DlmmQuoteError::MathOverflow)?;
     }
 
+    let fee = if fee_on_input {
+        included_fee_amount_in.saturating_sub(excluded_fee_amount_in)
+    } else {
+        fill.out_amount.saturating_sub(excluded_fee_amount_out)
+    };
     Ok(BinQuote {
         amount_in: included_fee_amount_in,
         amount_out: excluded_fee_amount_out,
+        fee,
     })
 }
 
@@ -710,6 +719,19 @@ pub fn dlmm_quote_exact_in(
     amount_in: u64,
     now_unix: i64,
 ) -> Result<u64, DlmmQuoteError> {
+    dlmm_quote_exact_in_detailed(pair, bin_arrays, swap_for_y, amount_in, now_unix).map(|(o, _)| o)
+}
+
+/// Like [`dlmm_quote_exact_in`] but also returns the total DEX fee (in the
+/// fee's charged-token units: input token when the pool collects on input for
+/// this direction, else output token).
+pub fn dlmm_quote_exact_in_detailed(
+    pair: &LbPair,
+    bin_arrays: &HashMap<i64, BinArray>,
+    swap_for_y: bool,
+    amount_in: u64,
+    now_unix: i64,
+) -> Result<(u64, u64), DlmmQuoteError> {
     if amount_in == 0 {
         return Err(DlmmQuoteError::NoFill);
     }
@@ -737,6 +759,7 @@ pub fn dlmm_quote_exact_in(
 
     let mut amount_left = amount_in;
     let mut total_out: u64 = 0;
+    let mut total_fee: u64 = 0;
 
     while amount_left > 0 {
         // Next array with liquidity per the bitmap (skips empty gaps).
@@ -788,6 +811,7 @@ pub fn dlmm_quote_exact_in(
                     total_out = total_out
                         .checked_add(r.amount_out)
                         .ok_or(DlmmQuoteError::MathOverflow)?;
+                    total_fee = total_fee.saturating_add(r.fee);
                 }
             }
 
@@ -804,7 +828,7 @@ pub fn dlmm_quote_exact_in(
     if total_out == 0 {
         return Err(DlmmQuoteError::NoFill);
     }
-    Ok(total_out)
+    Ok((total_out, total_fee))
 }
 
 #[cfg(test)]

@@ -16,3 +16,7 @@ preview-6h.log
 .live-armed
 markets.generated*.json
 observe-report*.json
+
+# S13 observe run artifacts
+reports/
+markets.generated.json

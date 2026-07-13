@@ -11,8 +11,8 @@
 //! (e.g. creator-pool BUY on PumpSwap, or missing DLMM bins) propagates its
 //! structured error and the route is rejected — never a fabricated fill.
 
-use crate::meteora_dlmm::{dlmm_quote_exact_in, BinArray, DlmmQuoteError, LbPair};
-use crate::pump_amm::{pump_quote, PumpAmmPool, PumpQuoteError};
+use crate::meteora_dlmm::{dlmm_quote_exact_in_detailed, BinArray, DlmmQuoteError, LbPair};
+use crate::pump_amm::{pump_quote_detailed, PumpAmmPool, PumpQuoteError};
 use arb_common::cost::CostModel;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
@@ -72,12 +72,23 @@ impl Leg {
 
     /// Exact-in quote for this leg. Direction derived from `input_mint`.
     pub fn quote(&self, input_mint: &Pubkey, amount_in: u64) -> Result<u64, LegReject> {
+        self.quote_detailed(input_mint, amount_in)
+            .map(|(out, _)| out)
+    }
+
+    /// Quote plus the DEX fee charged on this leg (fee-token units).
+    pub fn quote_detailed(
+        &self,
+        input_mint: &Pubkey,
+        amount_in: u64,
+    ) -> Result<(u64, u64), LegReject> {
         match self {
             Leg::Pump {
                 pool,
                 base_reserve,
                 quote_reserve,
-            } => pump_quote(pool, input_mint, amount_in, *base_reserve, *quote_reserve)
+            } => pump_quote_detailed(pool, input_mint, amount_in, *base_reserve, *quote_reserve)
+                .map(|d| (d.out, d.fee))
                 .map_err(LegReject::Pump),
             Leg::Meteora {
                 pair,
@@ -92,7 +103,7 @@ impl Leg {
                 } else {
                     return Err(LegReject::WrongMint);
                 };
-                dlmm_quote_exact_in(pair, arrays, swap_for_y, amount_in, *now_unix)
+                dlmm_quote_exact_in_detailed(pair, arrays, swap_for_y, amount_in, *now_unix)
                     .map_err(LegReject::Dlmm)
             }
         }
@@ -134,6 +145,10 @@ pub struct Candidate {
     pub net_profit: i128,
     /// The inclusion payment the cost model would pay at this gross.
     pub payment: u64,
+    /// DEX fee on leg1 (WSOL→token), in leg1's fee-token units.
+    pub leg1_fee: u64,
+    /// DEX fee on leg2 (token→WSOL), in leg2's fee-token units.
+    pub leg2_fee: u64,
 }
 
 impl Route {
@@ -174,7 +189,14 @@ impl Route {
         cost: &CostModel,
     ) -> Result<Candidate, RouteReject> {
         let token = self.token_mint(wsol).ok_or(RouteReject::TopologyMismatch)?;
-        let (token_mid, wsol_out) = self.round_trip(wsol, amount_in)?;
+        let (token_mid, leg1_fee) = self
+            .leg1
+            .quote_detailed(wsol, amount_in)
+            .map_err(RouteReject::Leg1)?;
+        let (wsol_out, leg2_fee) = self
+            .leg2
+            .quote_detailed(&token, token_mid)
+            .map_err(RouteReject::Leg2)?;
 
         if wsol_out <= amount_in {
             return Err(RouteReject::NonPositiveGross);
@@ -195,6 +217,8 @@ impl Route {
             gross_profit,
             net_profit,
             payment: cost.payment(gross_profit),
+            leg1_fee,
+            leg2_fee,
         })
     }
 }
