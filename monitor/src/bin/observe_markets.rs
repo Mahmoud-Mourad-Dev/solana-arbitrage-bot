@@ -48,14 +48,6 @@ fn bin_array_pda(pair: &Pubkey, index: i64, program: &Pubkey) -> Pubkey {
     .0
 }
 
-async fn get_many(rpc: &RpcClient, keys: &[Pubkey]) -> Result<Vec<Option<Account>>> {
-    let mut out = Vec::with_capacity(keys.len());
-    for chunk in keys.chunks(100) {
-        out.extend(rpc.get_multiple_accounts(chunk).await?);
-    }
-    Ok(out)
-}
-
 #[derive(Default)]
 struct RejectTally {
     topology: u64,
@@ -161,7 +153,6 @@ async fn main() -> Result<()> {
         };
 
         for m in &cache.markets {
-            // Phase 1: fetch pump pool + vaults, dlmm pair.
             let (Ok(pump_pool_k), Ok(pump_bv), Ok(pump_qv), Ok(dlmm_pair_k)) = (
                 Pubkey::from_str(&m.pump_pool),
                 Pubkey::from_str(&m.pump_base_vault),
@@ -171,16 +162,46 @@ async fn main() -> Result<()> {
                 rejects.no_state += 1;
                 continue;
             };
-            let phase1 = match get_many(&rpc, &[pump_pool_k, pump_bv, pump_qv, dlmm_pair_k]).await {
+
+            // Cheap probe of the pair ONLY to choose the bin-array window; the
+            // actual quote reads the pair again in the atomic snapshot below,
+            // so a stale active_id here can at worst under-cover (safe reject),
+            // never fabricate liquidity.
+            let active_id = match rpc.get_account(&dlmm_pair_k).await {
+                Ok(a) if a.owner == dlmm_prog => match decode_lb_pair(&a.data) {
+                    Ok(p) => p.active_id,
+                    Err(_) => {
+                        rejects.no_state += 1;
+                        continue;
+                    }
+                },
+                _ => {
+                    rejects.no_state += 1;
+                    continue;
+                }
+            };
+            let aidx = (active_id as i64).div_euclid(70);
+            let idxs: Vec<i64> = (aidx - 2..=aidx + 2).collect();
+            let arr_keys: Vec<Pubkey> = idxs
+                .iter()
+                .map(|&i| bin_array_pda(&dlmm_pair_k, i, &dlmm_prog))
+                .collect();
+
+            // SINGLE-SLOT snapshot: EVERY account the quote consumes in ONE
+            // getMultipleAccounts (≤9 keys ⇒ one RPC round ⇒ one slot). This is
+            // what kills the cross-slot phantom-profit class.
+            let mut snap_keys = vec![pump_pool_k, pump_bv, pump_qv, dlmm_pair_k];
+            snap_keys.extend_from_slice(&arr_keys);
+            let snap = match rpc.get_multiple_accounts(&snap_keys).await {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!(token = %m.token_mint, error = %e, "phase1 fetch failed");
+                    warn!(token = %m.token_mint, error = %e, "snapshot fetch failed");
                     rejects.no_state += 1;
                     continue;
                 }
             };
             let (Some(pool_acc), Some(bv_acc), Some(qv_acc), Some(pair_acc)) =
-                (&phase1[0], &phase1[1], &phase1[2], &phase1[3])
+                (&snap[0], &snap[1], &snap[2], &snap[3])
             else {
                 rejects.no_state += 1;
                 continue;
@@ -202,23 +223,8 @@ async fn main() -> Result<()> {
                 rejects.no_state += 1;
                 continue;
             };
-
-            // Phase 2: bin arrays around the (fresh) active id.
-            let aidx = (pair.active_id as i64).div_euclid(70);
-            let idxs: Vec<i64> = (aidx - 2..=aidx + 2).collect();
-            let arr_keys: Vec<Pubkey> = idxs
-                .iter()
-                .map(|&i| bin_array_pda(&dlmm_pair_k, i, &dlmm_prog))
-                .collect();
-            let arr_accs = match get_many(&rpc, &arr_keys).await {
-                Ok(v) => v,
-                Err(_) => {
-                    rejects.no_state += 1;
-                    continue;
-                }
-            };
             let mut arrays: HashMap<i64, BinArray> = HashMap::new();
-            for (i, acc) in idxs.iter().zip(&arr_accs) {
+            for (i, acc) in idxs.iter().zip(&snap[4..]) {
                 if let Some(acc) = acc {
                     if acc.owner == dlmm_prog {
                         if let Ok(ba) = decode_bin_array(&acc.data) {
@@ -322,10 +328,10 @@ async fn main() -> Result<()> {
                 "token": t, "net_profit_lamports": net, "gross_profit_lamports": gross,
             })),
             "scan_secs": started.elapsed().as_secs_f64(),
-            "caveat": "UNCONFIRMED: state is snapshotted across two RPC rounds \
-                       (pool/pair then bin arrays) so candidates may be cross-slot \
-                       artifacts. A single-slot confirmation gate is required before \
-                       any candidate is trusted. observe-markets never submits.",
+            "caveat": "Per-market quote inputs come from ONE atomic getMultipleAccounts \
+                       (single slot), so a candidate is internally consistent. It is still \
+                       a MONITOR signal, not a fill: it is not re-confirmed at submit time \
+                       and does not account for latency/competition. observe-markets never submits.",
         });
         let path = format!("observe-report-{}.json", now_ms());
         std::fs::write(&path, serde_json::to_string_pretty(&report)?)?;
@@ -370,8 +376,8 @@ async fn main() -> Result<()> {
         println!("report: {path}");
         if !candidates.is_empty() {
             println!(
-                "⚠ candidates are UNCONFIRMED (cross-slot snapshot); need a \
-                 single-slot re-quote before they mean anything. Never submitted."
+                "note: candidates are single-slot-consistent MONITOR signals, not \
+                 fills — no submit-time reconfirmation / latency modelled. Never submitted."
             );
         }
 
