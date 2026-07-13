@@ -23,5 +23,6 @@ pub mod pump_amm;
 pub mod quote;
 pub mod redis_sink;
 pub mod registry;
+pub mod route_engine;
 pub mod tick_math;
 pub mod types;
