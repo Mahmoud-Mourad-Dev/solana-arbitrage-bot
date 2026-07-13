@@ -14,3 +14,4 @@ preview-6h.log
 
 # Live-mode arming marker — must never be committed (see MODE/LIVE_MARKER_PATH)
 .live-armed
+markets.generated*.json

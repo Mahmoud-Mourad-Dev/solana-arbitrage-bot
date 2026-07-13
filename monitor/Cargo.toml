@@ -23,6 +23,7 @@ solana-client = "2.1"
 yellowstone-grpc-client = "13"
 yellowstone-grpc-proto = "12"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+solana-account-decoder = "2.1"
 
 [dev-dependencies]
 base64 = "0.22"
@@ -46,3 +47,7 @@ path = "src/bin/parity_harness.rs"
 [[bin]]
 name = "dlmm_quote_cli"
 path = "src/bin/dlmm_quote_cli.rs"
+
+[[bin]]
+name = "discover-markets"
+path = "src/bin/discover_markets.rs"
