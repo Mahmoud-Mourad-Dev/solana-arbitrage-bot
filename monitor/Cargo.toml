@@ -51,3 +51,7 @@ path = "src/bin/dlmm_quote_cli.rs"
 [[bin]]
 name = "discover-markets"
 path = "src/bin/discover_markets.rs"
+
+[[bin]]
+name = "observe-markets"
+path = "src/bin/observe_markets.rs"
