@@ -214,7 +214,8 @@ async fn main() -> Result<()> {
         if !base_is_wsol && p.quote_mint != wsol {
             continue;
         }
-        if !p.fee_schedule_verified() {
+        if p.has_creator() {
+            // Creator pools: SELL leg exact, BUY leg refused (see pump_amm).
             stats.pump_fee_unverified += 1;
         }
         pump_cands
@@ -230,7 +231,7 @@ async fn main() -> Result<()> {
                 } else {
                     p.quote_vault
                 },
-                fee_verified: p.fee_schedule_verified(),
+                fee_verified: !p.has_creator(),
             });
     }
     let mut dlmm_cands: HashMap<String, Vec<DlmmCand>> = HashMap::new();

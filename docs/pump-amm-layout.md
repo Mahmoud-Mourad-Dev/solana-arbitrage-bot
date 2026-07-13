@@ -50,33 +50,49 @@ Base total (no creator) = **25 bps**.
 - buy  = `66063d1201daebea`
 - sell = `33e685a4017f83ad`
 
-## Swap math — **EXACT for creator-less pools (parity-verified 2026-07-12)**
+## Swap math — verified against real swap EVENTS
 
-Empirically pinned by the balance-delta method against **29/29 real executed
-mainnet swaps** on the fixture pool (17 base-in + 12 quote-in, all byte-exact;
-8 embedded as regression vectors in `pump_amm.rs`). The initial fee-on-input
-guess was WRONG in both directions — this is why parity-first mattered.
+The on-chain buy/sell **events** (CPI logs, disc `e445a52e51cb9a1d`) carry
+explicit fee fields (`lp_fee`, `protocol_fee`, `coin_creator_fee`, the
+in-pool amount `C`, reserves). Decoding them across creator and creator-less
+pools is ground truth, not inference. Buy event disc `67f4521f2cf57777`,
+sell `3e2f370aa503dc2a`; instruction `buy_exact_quote_in` disc
+`c62e1552b4d9e870`.
 
-**PumpSwap fees are always charged on the QUOTE side:**
+**Total fee is always 30 bps; only the split shifts, and each component is
+ceiled independently (three separate ceils, NOT one 30-bps ceil):**
 
-*Direction A — base in (x) → quote out:*
+| pool | lp | protocol | creator |
+|---|---|---|---|
+| `coin_creator == 0` | 25 | 5 | 0 |
+| has creator | 20 | 5 | 5 |
+
+Fees are charged on the QUOTE token.
+
+*SELL — base in (x) → quote out (what the trader receives):*
 ```
-gross = floor(x · Rq / (Rb + x))          (fee-less CPMM)
-out   = gross − ceil(gross · 25 / 10⁴)    (25 bps off the quote OUTPUT)
+g   = floor(x · Rq / (Rb + x))
+out = g − Σⱼ ceil(g · bpsⱼ / 10⁴)      # lp + protocol + creator, each ceiled
 ```
-The whole 25 bps is retained in the quote vault (no separate transfers).
+**17/17 real swaps byte-exact** (creator + creator-less). Note: this is LESS
+than the quote-vault delta `g − lp` by the protocol+creator fees — those leave
+the vault to third parties, so an earlier balance-delta study that used the
+vault delta over-counted the trader's receipt by ~5 bps. Corrected here.
 
-*Direction B — quote in (U, user-paid) → base out:*
+*BUY — quote in (U, user-paid) → base out:*
 ```
-C   = floor(U · 10⁴ / (10⁴ + 30))         (30 bps ON-TOP divided out)
-out = floor(C · Rb / (Rq + C))            (fee-less CPMM)
+C   = max C such that C + Σⱼ ceil(C · bpsⱼ / 10⁴) ≤ U   # exact fee inversion
+out = floor(C · Rb / (Rq + C))
 ```
-Of the 30 bps markup: ~25 bps stays in the quote vault, ~5 bps of C leaves as
-two ≈2.5 bps transfers to protocol-fee recipients. Note the asymmetry
-(25 out vs 30 in) — measured, not assumed.
+**Exact for creator-less pools.** For creator pools this inversion
+**overestimates the true output by a few units** (the on-chain per-component
+rounding differs in a way not yet pinned) — since overestimating fabricates
+profit, creator-pool BUY returns `CreatorBuyUnverified` and is refused. The
+pool remains usable as the SELL leg.
 
-**Scope limits (enforced in code):** verified only for pools with
-`coin_creator == default`. Pools with a creator fee return
-`UnverifiedFeeSchedule` — their schedule (and any market-cap-tiered "fees v2"
-variants) must pass the same 100% parity bar before being quoted. The
-`coin_creator` offset itself is still provisional (needs a non-zero sample).
+**Open precision items:** exact creator-pool BUY rounding; confirm the
+creator fee is always 5 bps (all sampled creator pools showed 5, but the
+program reads it dynamically — a `fees-v2`/market-cap-tiered pool could
+differ); `coin_creator` offset (243-byte layout) still wants a non-zero
+cross-check, though `has_creator` behaves correctly on the zero fixture and
+on every creator pool sampled by matching event `coin_creator_fee > 0`.

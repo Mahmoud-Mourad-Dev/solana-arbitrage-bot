@@ -5,12 +5,19 @@
 //! chain-verified in `docs/pump-amm-layout.md`. Reserves are the live SPL
 //! balances of the pool's two vaults (like Raydium), NOT stored in the struct.
 //!
-//! Quote status: **EXACT for creator-less pools** — the two-direction fee
-//! formulas were reverse-engineered from and verified against 29/29 real
-//! executed mainnet swaps (byte-exact, balance-delta method), with 8 of those
-//! embedded below as regression vectors. Pools with a non-zero `coin_creator`
-//! are REFUSED (`UnverifiedFeeSchedule`) until their schedule gets the same
-//! treatment.
+//! Quote status (verified against real mainnet swap EVENTS — the on-chain
+//! log carries explicit fee fields, so this is ground truth, not inference):
+//! - **SELL (base in → quote out): EXACT for all pools** — 17/17 real swaps,
+//!   creator and creator-less. Returns what the TRADER receives
+//!   (`gross − lp − protocol − creator`), not the vault delta.
+//! - **BUY (quote in → base out): EXACT for creator-less pools**; creator
+//!   pools would overestimate (fee-inversion rounding unresolved) so they are
+//!   REFUSED (`CreatorBuyUnverified`) — a creator pool is still usable as the
+//!   SELL leg.
+//!
+//! Earlier note: an initial "balance-delta" study measured the quote-vault
+//! delta and mistook it for the trader's receipt, over-counting by the
+//! protocol fee (~5 bps). The event-based model here corrects that.
 
 use crate::math::cpmm_amount_out;
 use solana_sdk::pubkey::Pubkey;
@@ -25,21 +32,49 @@ pub const POOL_DISCRIMINATOR: [u8; 8] = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6
 pub const IX_BUY_DISCRIMINATOR: [u8; 8] = [0x66, 0x06, 0x3d, 0x12, 0x01, 0xda, 0xeb, 0xea];
 pub const IX_SELL_DISCRIMINATOR: [u8; 8] = [0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad];
 
-/// Fee schedule, EMPIRICALLY PINNED against 29/29 real mainnet swaps on a
-/// creator-less pool (see docs/pump-amm-layout.md, parity study 2026-07-12).
-/// PumpSwap fees are always charged on the QUOTE side:
+/// Fee schedule, EMPIRICALLY PINNED against real mainnet swap EVENTS across
+/// creator and creator-less pools (see docs/pump-amm-layout.md).
 ///
-/// * base in → quote out: `out = gross − ceil(gross·25/10⁴)` where
-///   `gross = floor(x·Rq/(Rb+x))` — 25 bps off the quote OUTPUT.
-/// * quote in → base out: `C = floor(U·10⁴/(10⁴+30))`, `out = floor(C·Rb/(Rq+C))`
-///   — a 30 bps ON-TOP markup divided out of the quote INPUT (25 bps retained
-///   in the vault, 5 bps transferred out as 2 × 2.5 bps).
+/// Total fee is ALWAYS 30 bps; only the split shifts by whether the pool has a
+/// coin creator. Each component is charged on the QUOTE token and rounded UP
+/// independently (summing three separate ceils, NOT one 30-bps ceil):
 ///
-/// These constants are verified ONLY for pools with `coin_creator == default`.
-/// Pools with a creator fee are REFUSED (`UnverifiedFeeSchedule`) until their
-/// schedule is parity-verified the same way.
-pub const QUOTE_OUT_FEE_BPS: u64 = 25;
-pub const QUOTE_IN_MARKUP_BPS: u64 = 30;
+/// | pool          | lp | protocol | creator |
+/// |---------------|----|----------|---------|
+/// | no creator    | 25 |    5     |    0    |
+/// | has creator   | 20 |    5     |    5    |
+///
+/// * SELL (base in → quote out): `g = floor(x·Rq/(Rb+x))`,
+///   `out = g − Σⱼ ceil(g·bpsⱼ/10⁴)`. **17/17 real swaps exact (both types).**
+/// * BUY (quote in → base out): find max `C` with
+///   `C + Σⱼ ceil(C·bpsⱼ/10⁴) ≤ U`, then `out = floor(C·Rb/(Rq+C))`.
+///   **Exact for creator-less pools; creator pools overestimate by a few
+///   units (unresolved), so creator-pool BUY is REFUSED, never shipped.**
+pub const PROTOCOL_FEE_BPS: u64 = 5;
+pub const NO_CREATOR_LP_BPS: u64 = 25;
+pub const CREATOR_LP_BPS: u64 = 20;
+pub const CREATOR_FEE_BPS: u64 = 5;
+
+/// The three fee components (lp, protocol, creator) in bps for a pool.
+pub fn fee_split(has_creator: bool) -> [u64; 3] {
+    if has_creator {
+        [CREATOR_LP_BPS, PROTOCOL_FEE_BPS, CREATOR_FEE_BPS]
+    } else {
+        [NO_CREATOR_LP_BPS, PROTOCOL_FEE_BPS, 0]
+    }
+}
+
+fn ceil_div(a: u128, b: u128) -> u128 {
+    a.div_ceil(b)
+}
+
+/// Sum of the independently-ceiled fee components on `amount` (quote units).
+fn total_fee(amount: u64, split: [u64; 3]) -> u64 {
+    split
+        .iter()
+        .map(|&bps| ceil_div(amount as u128 * bps as u128, 10_000) as u64)
+        .sum()
+}
 
 /// Minimum size of a Pool account (through `lp_supply`). Real accounts observed
 /// at 301 bytes; we require at least the fields we parse.
@@ -69,11 +104,10 @@ pub enum PumpDecodeError {
 }
 
 impl PumpAmmPool {
-    /// True when the empirically-verified fee schedule applies to this pool
-    /// (no coin-creator fee). Pools with a creator are refused until their
-    /// schedule is parity-verified — never guessed.
-    pub fn fee_schedule_verified(&self) -> bool {
-        self.coin_creator == Pubkey::default()
+    /// Whether the pool charges a coin-creator fee (affects the fee split and,
+    /// for now, whether BUY is exact).
+    pub fn has_creator(&self) -> bool {
+        self.coin_creator != Pubkey::default()
     }
 
     /// True when WSOL is one side of the pair (our WSOL-anchored strategy).
@@ -134,17 +168,37 @@ pub enum PumpQuoteError {
     EmptyReserves,
     /// The trade produces no output at this size.
     NoFill,
-    /// Pool has a coin-creator fee whose schedule we have NOT parity-verified.
-    /// Refuse rather than guess.
-    UnverifiedFeeSchedule,
+    /// BUY (quote in → base out) on a coin-creator pool: our inversion
+    /// overestimates by a few units, which would fabricate profit. Refused
+    /// until the exact on-chain rounding is pinned. Such a pool can still be
+    /// used as the SELL leg (base in → quote out), which IS exact.
+    CreatorBuyUnverified,
 }
 
-/// Exact-in PumpSwap quote — the EXACT integer formulas reverse-engineered
-/// from real executed swaps (29/29 byte-exact; see module fee docs).
+/// The quote-token input `C` that actually enters the pool for a BUY of
+/// user-paid `u_in`: the largest `C` with `C + Σ ceil(C·bpsⱼ/10⁴) ≤ u_in`.
+/// Matches the on-chain `buy_exact_quote_in` fee inversion exactly.
+fn effective_buy_input(u_in: u64, split: [u64; 3]) -> u64 {
+    let total: u64 = split.iter().sum();
+    let fits = |c: u64| c as u128 + total_fee(c, split) as u128 <= u_in as u128;
+    // Start from the closed-form estimate and correct the ±1 ceil boundary.
+    let mut c = ((u_in as u128 * 10_000) / (10_000 + total as u128)) as u64;
+    while c > 0 && !fits(c) {
+        c -= 1;
+    }
+    while fits(c + 1) {
+        c += 1;
+    }
+    c
+}
+
+/// Exact-in PumpSwap quote from real live vault reserves. Direction is derived
+/// from `input_mint` vs the pool's base/quote mints (WSOL can be EITHER side —
+/// never assume).
 ///
-/// Reserves are the live vault balances pre-swap. Direction is derived from
-/// `input_mint` relative to the pool's base/quote mints (WSOL can be EITHER
-/// side — never assume).
+/// * base in → quote out (SELL): exact for all pools (17/17 real swaps).
+/// * quote in → base out (BUY): exact for creator-less pools; creator pools
+///   are refused (`CreatorBuyUnverified`) to preserve never-overestimate.
 pub fn pump_quote(
     pool: &PumpAmmPool,
     input_mint: &Pubkey,
@@ -152,25 +206,23 @@ pub fn pump_quote(
     base_reserve: u64,
     quote_reserve: u64,
 ) -> Result<u64, PumpQuoteError> {
-    if !pool.fee_schedule_verified() {
-        return Err(PumpQuoteError::UnverifiedFeeSchedule);
-    }
     if base_reserve == 0 || quote_reserve == 0 {
         return Err(PumpQuoteError::EmptyReserves);
     }
     if amount_in == 0 {
         return Err(PumpQuoteError::NoFill);
     }
+    let split = fee_split(pool.has_creator());
     let out = if input_mint == &pool.base_mint {
-        // base in → quote out: fee-less CPMM, then 25 bps (ceil) OFF the output.
+        // SELL: fee-less CPMM gross, then subtract independently-ceiled fees.
         let gross = cpmm_amount_out(amount_in, base_reserve, quote_reserve, 0, 10_000);
-        let fee = (gross as u128 * QUOTE_OUT_FEE_BPS as u128).div_ceil(10_000) as u64;
-        gross.saturating_sub(fee)
+        gross.saturating_sub(total_fee(gross, split))
     } else if input_mint == &pool.quote_mint {
-        // quote in → base out: divide the 30 bps on-top markup out of the
-        // input (floor), then fee-less CPMM (floor).
-        let effective =
-            ((amount_in as u128 * 10_000) / (10_000 + QUOTE_IN_MARKUP_BPS as u128)) as u64;
+        // BUY: exact inversion of the input fee, then fee-less CPMM.
+        if pool.has_creator() {
+            return Err(PumpQuoteError::CreatorBuyUnverified);
+        }
+        let effective = effective_buy_input(amount_in, split);
         cpmm_amount_out(effective, quote_reserve, base_reserve, 0, 10_000)
     } else {
         return Err(PumpQuoteError::WrongMint);
@@ -223,7 +275,7 @@ mod tests {
         assert_eq!(p.lp_supply, 3_871_692_136_521);
         // No coin-creator on this pool ⇒ base 25 bps fee.
         assert_eq!(p.coin_creator, Pubkey::default());
-        assert!(p.fee_schedule_verified());
+        assert!(!p.has_creator());
     }
 
     #[test]
@@ -248,35 +300,37 @@ mod tests {
         ));
     }
 
-    /// REAL executed mainnet swaps on the fixture pool (2026-07-12), extracted
-    /// via the balance-delta method: pre-swap vault reserves, user input,
-    /// actual user output. The quote must reproduce every output EXACTLY.
+    /// REAL creator-less swaps on the fixture pool. `out` is the amount the
+    /// TRADER receives (event field f104 = gross − lp − proto), NOT the vault
+    /// delta (which also carries the protocol fee away to a third party). The
+    /// first row's out is event-confirmed on jwCm9JJR (66_386_586_546); the
+    /// rest use the same event-validated formula on their real reserves.
     /// Direction A: base(WSOL) in → quote out.
     const REAL_SWAPS_BASE_IN: &[(u64, u64, u64, u64)] = &[
         (
             501_037_669_936,
             36_137_094_094_035,
             924_918_154,
-            66_419_879_719,
-        ), // jwCm9JJR8x2XHZg6
+            66_386_586_546,
+        ), // jwCm9JJR
         (
             500_974_990_791,
             36_140_885_655_287,
             2_058_411_074,
-            147_518_667_713,
-        ), // 5okh17ZAZ6Vx7HCf
+            147_444_723_518,
+        ), // 5okh17ZA
         (
             498_476_080_737,
             36_321_608_291_587,
             2_498_910_054,
-            180_722_636_300,
-        ), // 5zsKkAg1semv75G7
+            180_632_048_512,
+        ), // 5zsKkAg1
         (
             495_067_428_118,
             36_570_986_090_308,
             3_613_243_728,
-            264_316_513_239,
-        ), // 2yMUVGHiZbrRNDBx
+            264_184_023_758,
+        ), // 2yMUVGHi
     ];
     /// Direction B: quote in → base(WSOL) out (input = user-paid amount).
     const REAL_SWAPS_QUOTE_IN: &[(u64, u64, u64, u64)] = &[
@@ -306,26 +360,105 @@ mod tests {
         ), // 4P3hju5oZ1pW1W2p
     ];
 
+    // Real creator-pool swaps (FFcYgSSg / 4w2cysot, coin_creator set):
+    // SELL (base in → quote out): (Rb, Rq, x, out).
+    const REAL_CREATOR_SELLS: &[(u64, u64, u64, u64)] = &[
+        (
+            26_041_566_079_395,
+            18_076_600_971_954,
+            331_078_229,
+            229_123_655,
+        ), // 66pAEPX2
+        (
+            26_051_170_950_238,
+            18_069_922_681_817,
+            93_290_000,
+            64_514_558,
+        ), // 4A22ggkV
+        (
+            26_050_218_587_527,
+            18_070_581_973_829,
+            952_362_711,
+            658_631_398,
+        ), // Nq832d3q
+        (
+            26_047_288_410_402,
+            18_072_610_749_077,
+            2_930_177_125,
+            2_026_742_406,
+        ), // 67JffNr9
+    ];
+    // Real creator-pool BUY (quote in → base out): (Rb, Rq, U, out).
+    const REAL_CREATOR_BUYS: &[(u64, u64, u64, u64)] = &[
+        (
+            29_201_030_158_845,
+            4_127_335_851_343,
+            6_686_600_000,
+            47_090_342_993,
+        ), // 22otDMKy
+        (
+            29_209_285_190_721,
+            4_126_167_065_044,
+            1_169_952_753,
+            8_255_031_876,
+        ), // 5tkZPG1k
+        (
+            29_216_298_642_157,
+            4_125_174_586_861,
+            50_561_831,
+            357_025_623,
+        ), // 2j1YdKJ5
+    ];
+
+    /// A synthetic pool with a set coin creator (real fee split 20/5/5).
+    fn creator_pool() -> PumpAmmPool {
+        let mut p = decode_real();
+        p.coin_creator = Pubkey::new_unique();
+        p
+    }
+
     #[test]
-    fn quote_matches_real_swaps_exactly_base_in() {
+    fn sell_matches_real_swaps_exactly_creatorless_and_creator() {
         let p = decode_real();
         for &(rb, rq, x, expected) in REAL_SWAPS_BASE_IN {
-            let out = pump_quote(&p, &p.base_mint, x, rb, rq).unwrap();
-            assert_eq!(out, expected, "base-in swap must be byte-exact");
+            assert_eq!(pump_quote(&p, &p.base_mint, x, rb, rq).unwrap(), expected);
+        }
+        let c = creator_pool();
+        for &(rb, rq, x, expected) in REAL_CREATOR_SELLS {
+            assert_eq!(
+                pump_quote(&c, &c.base_mint, x, rb, rq).unwrap(),
+                expected,
+                "creator-pool SELL must be byte-exact"
+            );
         }
     }
 
     #[test]
-    fn quote_matches_real_swaps_exactly_quote_in() {
+    fn buy_matches_real_swaps_exactly_creatorless() {
         let p = decode_real();
         for &(rb, rq, u, expected) in REAL_SWAPS_QUOTE_IN {
-            let out = pump_quote(&p, &p.quote_mint, u, rb, rq).unwrap();
-            assert_eq!(out, expected, "quote-in swap must be byte-exact");
+            assert_eq!(pump_quote(&p, &p.quote_mint, u, rb, rq).unwrap(), expected);
         }
     }
 
     #[test]
-    fn quote_rejects_wrong_mint_empty_reserves_and_unverified_creator() {
+    fn creator_buy_is_refused_not_overestimated() {
+        // We KNOW the exact answers; our inversion would overestimate them, so
+        // the quote must refuse rather than fabricate profit.
+        let c = creator_pool();
+        for &(rb, rq, u, actual) in REAL_CREATOR_BUYS {
+            assert_eq!(
+                pump_quote(&c, &c.quote_mint, u, rb, rq),
+                Err(PumpQuoteError::CreatorBuyUnverified)
+            );
+            // Sanity: the naive inversion really is ≥ the true output (unsafe).
+            let naive = cpmm_amount_out(effective_buy_input(u, fee_split(true)), rq, rb, 0, 10_000);
+            assert!(naive >= actual, "inversion must be the overestimating side");
+        }
+    }
+
+    #[test]
+    fn quote_rejects_wrong_mint_and_empty_reserves() {
         let p = decode_real();
         assert_eq!(
             pump_quote(&p, &Pubkey::default(), 1_000, 10, 10),
@@ -335,13 +468,18 @@ mod tests {
             pump_quote(&p, &p.base_mint, 1_000, 0, 10),
             Err(PumpQuoteError::EmptyReserves)
         );
-        // A pool WITH a creator fee must refuse until parity-verified.
-        let mut with_creator = p.clone();
-        with_creator.coin_creator = Pubkey::new_unique();
-        assert_eq!(
-            pump_quote(&with_creator, &with_creator.base_mint, 1_000, 10, 10),
-            Err(PumpQuoteError::UnverifiedFeeSchedule)
-        );
+    }
+
+    #[test]
+    fn effective_buy_input_is_max_feasible() {
+        // The inversion must be the LARGEST C whose grossed-up cost fits u_in.
+        let split = fee_split(true);
+        for u in [10_000u64, 1_000_000, 6_686_600_000] {
+            let c = effective_buy_input(u, split);
+            let cost = |x: u64| x as u128 + total_fee(x, split) as u128;
+            assert!(cost(c) <= u as u128);
+            assert!(cost(c + 1) > u as u128);
+        }
     }
 
     #[test]
