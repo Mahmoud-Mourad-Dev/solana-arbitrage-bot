@@ -534,6 +534,18 @@ pub enum DlmmQuoteError {
     MathOverflow,
 }
 
+impl DlmmQuoteError {
+    /// True for errors that mean "this size is too big for the liquidity we
+    /// hold" (as opposed to a structural problem) — the optimizer treats these
+    /// as an upper bound to search under, not a route-wide failure.
+    pub fn is_capacity(&self) -> bool {
+        matches!(
+            self,
+            DlmmQuoteError::InsufficientBinCoverage { .. } | DlmmQuoteError::ExhaustedLiquidity
+        )
+    }
+}
+
 struct FillResult {
     amount_in: u64,
     amount_left: u64,

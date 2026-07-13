@@ -149,6 +149,22 @@ impl Route {
         }
     }
 
+    /// Run the round trip WITHOUT the profit gate: returns
+    /// `(token_mid, wsol_out)` or the typed leg/topology rejection. This is the
+    /// primitive the optimizer probes across sizes.
+    pub fn round_trip(&self, wsol: &Pubkey, amount_in: u64) -> Result<(u64, u64), RouteReject> {
+        let token = self.token_mint(wsol).ok_or(RouteReject::TopologyMismatch)?;
+        let token_mid = self
+            .leg1
+            .quote(wsol, amount_in)
+            .map_err(RouteReject::Leg1)?;
+        let wsol_out = self
+            .leg2
+            .quote(&token, token_mid)
+            .map_err(RouteReject::Leg2)?;
+        Ok((token_mid, wsol_out))
+    }
+
     /// Evaluate the full round trip at `amount_in` WSOL. `cost` carries the
     /// fee/tip model AND the required-net floor (its `required_net_lamports`).
     pub fn evaluate(
@@ -158,15 +174,7 @@ impl Route {
         cost: &CostModel,
     ) -> Result<Candidate, RouteReject> {
         let token = self.token_mint(wsol).ok_or(RouteReject::TopologyMismatch)?;
-
-        let token_mid = self
-            .leg1
-            .quote(wsol, amount_in)
-            .map_err(RouteReject::Leg1)?;
-        let wsol_out = self
-            .leg2
-            .quote(&token, token_mid)
-            .map_err(RouteReject::Leg2)?;
+        let (token_mid, wsol_out) = self.round_trip(wsol, amount_in)?;
 
         if wsol_out <= amount_in {
             return Err(RouteReject::NonPositiveGross);
