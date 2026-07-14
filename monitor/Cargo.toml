@@ -55,3 +55,11 @@ path = "src/bin/discover_markets.rs"
 [[bin]]
 name = "observe-markets"
 path = "src/bin/observe_markets.rs"
+
+[[bin]]
+name = "observe-narrow"
+path = "src/bin/observe_narrow.rs"
+
+[[bin]]
+name = "rebuild-report"
+path = "src/bin/rebuild_report.rs"

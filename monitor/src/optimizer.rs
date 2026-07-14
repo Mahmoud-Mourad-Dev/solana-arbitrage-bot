@@ -217,6 +217,100 @@ pub fn optimize(
     route.evaluate(wsol, best_amount, cost).ok()
 }
 
+// ─────────────────────── size analysis (optimizer correction) ──────────────
+// Exposes the raw gross-vs-size curve and the net-optimal size under EACH cost
+// scenario, so a report can show that an "optimal" size is a real market
+// optimum and not an artifact of a stepped Jito-tip schedule.
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Jito-tip tier thresholds (gross lamports) where the tip % steps up. An
+/// optimizer will happily park a trade just below one of these.
+const TIP_TIER_THRESHOLDS: [u64; 3] = [
+    1_000_000_000 / 200, // 0.005 SOL: 50%→60%
+    1_000_000_000 / 20,  // 0.05  SOL: 60%→70%
+    1_000_000_000 / 2,   // 0.5   SOL: 70%→80%
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SizeAnalysis {
+    /// (size_lamports, gross_lamports) over a fixed log grid. gross may be < 0.
+    pub curve: Vec<(u64, i128)>,
+    pub gross_opt_size_lamports: u64,
+    pub gross_opt_lamports: i128,
+    /// scenario label → (net-optimal size, net at that size).
+    pub net_opt_by_scenario: BTreeMap<String, (u64, i128)>,
+    /// True if the competitive net-optimal gross sits within 0.5% just BELOW a
+    /// tip-tier threshold — i.e. the size is shaped by the fee schedule.
+    pub tip_tier_shaped: bool,
+}
+
+/// Sample the gross curve and find gross- and net-optimal sizes. `scenarios`
+/// are (label, model). Returns None if the route is structurally dead.
+pub fn size_analysis(
+    route: &Route,
+    wsol: &Pubkey,
+    grid: &SizeGrid,
+    scenarios: &[(String, CostModel)],
+) -> Option<SizeAnalysis> {
+    let points = log_grid(grid.min, grid.max, grid.coarse_points.max(24));
+    let mut curve: Vec<(u64, i128)> = Vec::new();
+    for &a in &points {
+        match route.round_trip(wsol, a) {
+            Ok((_, out)) => curve.push((a, out as i128 - a as i128)),
+            Err(RouteReject::Leg1(LegReject::Dlmm(e)))
+            | Err(RouteReject::Leg2(LegReject::Dlmm(e)))
+                if e.is_capacity() => {}
+            Err(_) => return None, // structural death
+        }
+    }
+    if curve.is_empty() {
+        return None;
+    }
+    let (gross_opt_size, gross_opt) = curve.iter().copied().max_by_key(|&(_, g)| g).unwrap();
+    let mut net_opt_by_scenario = BTreeMap::new();
+    let mut competitive_gross = None;
+    for (label, model) in scenarios {
+        let best = curve
+            .iter()
+            .map(|&(size, gross)| {
+                let net = if gross > 0 {
+                    model.net(gross as u64)
+                } else {
+                    gross
+                };
+                (size, net, gross)
+            })
+            .max_by_key(|&(_, net, _)| net)
+            .unwrap();
+        net_opt_by_scenario.insert(label.clone(), (best.0, best.1));
+        if label == "competitive" {
+            competitive_gross = Some(best.2);
+        }
+    }
+    let tip_tier_shaped = competitive_gross.map(near_tier).unwrap_or(false);
+    Some(SizeAnalysis {
+        curve,
+        gross_opt_size_lamports: gross_opt_size,
+        gross_opt_lamports: gross_opt,
+        net_opt_by_scenario,
+        tip_tier_shaped,
+    })
+}
+
+/// True if `gross` sits within 0.5% just below a tip-tier threshold.
+fn near_tier(gross: i128) -> bool {
+    if gross <= 0 {
+        return false;
+    }
+    let g = gross as u64;
+    TIP_TIER_THRESHOLDS.iter().any(|&t| {
+        let lo = t - t / 200; // 0.5% below
+        g >= lo && g < t
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +460,58 @@ mod tests {
         // Fees make every size a loss ⇒ nothing clears required-net (0 floor
         // still needs net ≥ 0, and net is always < 0 here).
         assert!(optimize(&route, &wsol(), &cost(), &grid()).is_none());
+    }
+
+    #[test]
+    fn size_analysis_reports_curve_and_flags_tip_tier_boundary() {
+        let route = profitable_route();
+        let scenarios: Vec<(String, CostModel)> = crate::observe_report::default_scenarios()
+            .into_iter()
+            .map(|s| (s.label.clone(), s.model()))
+            .collect();
+        let sa = size_analysis(&route, &wsol(), &grid(), &scenarios).unwrap();
+        assert!(!sa.curve.is_empty());
+        // gross-opt must dominate every sampled gross.
+        for &(_, g) in &sa.curve {
+            assert!(sa.gross_opt_lamports >= g);
+        }
+        assert!(sa.net_opt_by_scenario.contains_key("competitive"));
+        // near_tier logic: 0.004999 SOL is just below the 0.005 threshold.
+        assert!(near_tier(4_999_000));
+        assert!(!near_tier(3_000_000));
+        assert!(!near_tier(-5));
+    }
+
+    #[test]
+    fn size_analysis_none_on_structural_death() {
+        // creator-pool BUY leg1 ⇒ dead at all sizes.
+        let token = Pubkey::new_unique();
+        let mut pool = PumpAmmPool {
+            bump: 0,
+            index: 0,
+            creator: Pubkey::default(),
+            base_mint: token,
+            quote_mint: wsol(),
+            lp_mint: Pubkey::default(),
+            base_vault: Pubkey::default(),
+            quote_vault: Pubkey::default(),
+            lp_supply: 0,
+            coin_creator: Pubkey::new_unique(),
+        };
+        pool.coin_creator = Pubkey::new_unique();
+        let route = Route {
+            leg1: Leg::Pump {
+                pool,
+                base_reserve: 1_000_000_000_000,
+                quote_reserve: 1_000_000_000_000,
+            },
+            leg2: pump_leg(token, wsol(), 1_000_000_000_000, 1_000_000_000_000),
+        };
+        let scenarios: Vec<(String, CostModel)> = crate::observe_report::default_scenarios()
+            .into_iter()
+            .map(|s| (s.label.clone(), s.model()))
+            .collect();
+        assert!(size_analysis(&route, &wsol(), &grid(), &scenarios).is_none());
     }
 
     #[test]
