@@ -17,6 +17,7 @@ pub mod geyser;
 pub mod market_discovery;
 pub mod math;
 pub mod meteora_dlmm;
+pub mod narrow_report;
 pub mod observe_live;
 pub mod observe_report;
 pub mod optimizer;
