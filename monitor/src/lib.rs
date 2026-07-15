@@ -28,5 +28,6 @@ pub mod quote;
 pub mod redis_sink;
 pub mod registry;
 pub mod route_engine;
+pub mod sim_parity;
 pub mod tick_math;
 pub mod types;
