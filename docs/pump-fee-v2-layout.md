@@ -67,7 +67,26 @@ recipients at [9]/[10] were observed rotating (≥2–3 distinct values per pool
 therefore mandatory, and the cloned account list must be validated against this
 evidence (roles/owners/PDAs) before use — which the later slices enforce.
 
+## Slice-3 correction — [22] and [23] ROTATE (revises the slice-1 table)
+
+The slice-1 evidence had only **1** direct sell for route1, which made [22]
+and [23] look pool-constant. With **3 distinct-seller fixtures per pool**
+(slice 3), the truth emerged: **[22] and [23] rotate WITH the protocol-fee
+recipient [9]/[10]** — in route1's third sell, [9], [22], and [23] all change
+together. So the coherent rotating set is **[9], [10], [22], [23]**, and a
+cloned recipient must copy all four from the SAME source transaction and
+refresh them together. [21] remains pool-constant; [19]/[20] remain global.
+This vindicates the ≥3-distinct-seller requirement — a single sample would
+have mis-fixed [22]/[23].
+
+Corrected index classes (verified in `pump_reconstruct.rs`):
+- global: [2],[11],[12],[13],[14],[15],[16],[19],[20]
+- pool-specific (constant per pool): [0],[3],[4],[7],[8],[17],[18],[21]
+- rotating (per recipient): [9],[10],[22],[23]
+- user-specific: [1],[5],[6]
+
 ## Honesty guard
 
-`pump_evidence.rs` tests fail if anyone relabels [19],[21],[22],[23] as
-"proven", or if the data-format reconstruction stops being byte-exact.
+`pump_evidence.rs` and `pump_reconstruct.rs` tests fail if anyone relabels
+[19],[21],[22],[23] as derivable/proven, if the data reconstruction stops
+being byte-exact, or if [22]/[23] are treated as pool-constant.

@@ -1,0 +1,1277 @@
+{
+ "schema_version": 1,
+ "note": "permanent reconstruction fixtures (route1,route3) \u2014 direct top-level Pump sells",
+ "routes": {
+  "route1:PumpSell": {
+   "route": "route1",
+   "pool": "5ByL7MZoLABYnwMPZKPKjf4MGkZ7FeBzrAnos19Pre2z",
+   "mint": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+   "status": "SUFFICIENT",
+   "fixtures": [
+    {
+     "accounts": [
+      {
+       "index": 0,
+       "origin": "Static",
+       "pubkey": "5ByL7MZoLABYnwMPZKPKjf4MGkZ7FeBzrAnos19Pre2z",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 1,
+       "origin": "Static",
+       "pubkey": "FDJrnQLnFV99syvqh4LQxSQeH46wvCkLkeEQDnWhJTqH",
+       "signer": true,
+       "writable": true
+      },
+      {
+       "index": 2,
+       "origin": "LutReadonly",
+       "pubkey": "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 3,
+       "origin": "Static",
+       "pubkey": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 4,
+       "origin": "LutReadonly",
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 5,
+       "origin": "Static",
+       "pubkey": "GVs114MuNQ8PhPEe1wpG1t3H59N5MKQdUc5zVK9c9SgT",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 6,
+       "origin": "Static",
+       "pubkey": "Euzu1VihWhU3qB33izxvoJfLi6Uiris5SBG32pwoB2Mt",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 7,
+       "origin": "Static",
+       "pubkey": "5jeRNm8Rx8CrbhbiyNWE4wStfrtfrVpXU76cK9jovyGd",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 8,
+       "origin": "Static",
+       "pubkey": "9dMrbDzoV19Aab86WPdGaWoKemVgkdwaBEzW4x8mi6Kw",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 9,
+       "origin": "LutReadonly",
+       "pubkey": "7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 10,
+       "origin": "Static",
+       "pubkey": "7GFUN3bWzJMKMRZ34JLsvcqdssDbXnp589SiE33KVwcC",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 11,
+       "origin": "LutReadonly",
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 12,
+       "origin": "Static",
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 13,
+       "origin": "Static",
+       "pubkey": "11111111111111111111111111111111",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 14,
+       "origin": "LutReadonly",
+       "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 15,
+       "origin": "LutReadonly",
+       "pubkey": "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 16,
+       "origin": "Static",
+       "pubkey": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 17,
+       "origin": "Static",
+       "pubkey": "Hx8BkSDeuVUqJAaJLPA4bPNBG9FU87v6nX9ZStH1Pr6B",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 18,
+       "origin": "Static",
+       "pubkey": "2DgMm8Cy2qdNAvHHxdkAcnVrhBBybUohN22hT5Ug7oEQ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 19,
+       "origin": "Static",
+       "pubkey": "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 20,
+       "origin": "LutReadonly",
+       "pubkey": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 21,
+       "origin": "Static",
+       "pubkey": "Gb1whM1LQEWWo4hvZkr8yToUect7fedPXmnygAgmWaYm",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 22,
+       "origin": "LutReadonly",
+       "pubkey": "5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 23,
+       "origin": "Static",
+       "pubkey": "CASRL2zkwDnppxEFQ4LgdwgR9pdz5Q8R8nEMKVZ9QoLp",
+       "signer": false,
+       "writable": true
+      }
+     ],
+     "block_time": 1784162368,
+     "captured_at_ms": 1784162954975,
+     "class": "DirectTopLevel",
+     "data_b58": "5jRcjdixRUDQyKzRoS4QqUVfoYLxGtjod",
+     "decoded": {
+      "amount_in": 302599000,
+      "min_out": 8286712
+     },
+     "ix_index": 4,
+     "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+     "program_provenance": [
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433169304,
+       "program_data_address": "6naEzKeUuFh1Jeeu51NXQgr5qkXgXtc9WKNct4xynVJc",
+       "program_data_slot": 433112355,
+       "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      },
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433169304,
+       "program_data_address": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+       "program_data_slot": 420801948,
+       "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+      }
+     ],
+     "rejection_reason": null,
+     "route_id": "route1",
+     "schema_version": 1,
+     "signature": "442ykA4oYicfGhXmQ12t4pRHmUPxK813UM8Rrn1Ebxj8JeQydYpHtyE5LfNJVJYUSu3ss3T2D98Ndc4yJHM2Hj3V",
+     "slot": 433169304,
+     "tx_version": "0",
+     "validation_status": "accepted",
+     "venue": "PumpSell"
+    },
+    {
+     "accounts": [
+      {
+       "index": 0,
+       "origin": "Static",
+       "pubkey": "5ByL7MZoLABYnwMPZKPKjf4MGkZ7FeBzrAnos19Pre2z",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 1,
+       "origin": "Static",
+       "pubkey": "HWfnbztngwCxAJBEHMktp3ZYwmUfRH8QvQMonCdGE2R",
+       "signer": true,
+       "writable": true
+      },
+      {
+       "index": 2,
+       "origin": "LutReadonly",
+       "pubkey": "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 3,
+       "origin": "Static",
+       "pubkey": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 4,
+       "origin": "LutReadonly",
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 5,
+       "origin": "Static",
+       "pubkey": "6PPfPcDFokoGKy83NKwZ6RNV9bLwVe9NuDE4WE82Kz4e",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 6,
+       "origin": "Static",
+       "pubkey": "5Q7nYBx2zBpkR2TENUyXmqEBpWvooFgR7q5UnSQxqv5a",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 7,
+       "origin": "Static",
+       "pubkey": "5jeRNm8Rx8CrbhbiyNWE4wStfrtfrVpXU76cK9jovyGd",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 8,
+       "origin": "Static",
+       "pubkey": "9dMrbDzoV19Aab86WPdGaWoKemVgkdwaBEzW4x8mi6Kw",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 9,
+       "origin": "LutReadonly",
+       "pubkey": "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 10,
+       "origin": "Static",
+       "pubkey": "X5QPJcpph4mBAJDzc4hRziFftSbcygV59kRb2Fu6Je1",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 11,
+       "origin": "LutReadonly",
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 12,
+       "origin": "Static",
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 13,
+       "origin": "Static",
+       "pubkey": "11111111111111111111111111111111",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 14,
+       "origin": "Static",
+       "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 15,
+       "origin": "LutReadonly",
+       "pubkey": "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 16,
+       "origin": "Static",
+       "pubkey": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 17,
+       "origin": "Static",
+       "pubkey": "Hx8BkSDeuVUqJAaJLPA4bPNBG9FU87v6nX9ZStH1Pr6B",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 18,
+       "origin": "Static",
+       "pubkey": "2DgMm8Cy2qdNAvHHxdkAcnVrhBBybUohN22hT5Ug7oEQ",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 19,
+       "origin": "LutReadonly",
+       "pubkey": "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 20,
+       "origin": "LutReadonly",
+       "pubkey": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 21,
+       "origin": "Static",
+       "pubkey": "Gb1whM1LQEWWo4hvZkr8yToUect7fedPXmnygAgmWaYm",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 22,
+       "origin": "LutReadonly",
+       "pubkey": "5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 23,
+       "origin": "LutWritable",
+       "pubkey": "CASRL2zkwDnppxEFQ4LgdwgR9pdz5Q8R8nEMKVZ9QoLp",
+       "signer": false,
+       "writable": true
+      }
+     ],
+     "block_time": 1784162358,
+     "captured_at_ms": 1784162955280,
+     "class": "DirectTopLevel",
+     "data_b58": "5jRcjdixRUDLKLBDpGs8yZJMeDjUh9tfR",
+     "decoded": {
+      "amount_in": 4501903410,
+      "min_out": 124100591
+     },
+     "ix_index": 4,
+     "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+     "program_provenance": [
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433169280,
+       "program_data_address": "6naEzKeUuFh1Jeeu51NXQgr5qkXgXtc9WKNct4xynVJc",
+       "program_data_slot": 433112355,
+       "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      },
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433169280,
+       "program_data_address": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+       "program_data_slot": 420801948,
+       "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+      }
+     ],
+     "rejection_reason": null,
+     "route_id": "route1",
+     "schema_version": 1,
+     "signature": "B9jFjd1x6qrYXNwByLmRFcpydxnEUAXEdM6JoCUodYXWNQ4rtDLP7Z6E6HDF4DsxYJCV21fF1rwU5VZfzq6ZWsF",
+     "slot": 433169280,
+     "tx_version": "0",
+     "validation_status": "accepted",
+     "venue": "PumpSell"
+    },
+    {
+     "accounts": [
+      {
+       "index": 0,
+       "origin": "Static",
+       "pubkey": "5ByL7MZoLABYnwMPZKPKjf4MGkZ7FeBzrAnos19Pre2z",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 1,
+       "origin": "Static",
+       "pubkey": "3UpAcAvWTZSSWtYkEoab23NRrSwGUBpPeFfgbTC4bFdT",
+       "signer": true,
+       "writable": true
+      },
+      {
+       "index": 2,
+       "origin": "LutReadonly",
+       "pubkey": "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 3,
+       "origin": "Static",
+       "pubkey": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 4,
+       "origin": "LutReadonly",
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 5,
+       "origin": "Static",
+       "pubkey": "9YweqGgXwN4S9D4HPemXodo6qqu2daV95mjqq17GAorT",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 6,
+       "origin": "Static",
+       "pubkey": "4NufdNHSnMD1eqaLmoSADNFPhnqUb7Z1tvPCcgZMX4R7",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 7,
+       "origin": "Static",
+       "pubkey": "5jeRNm8Rx8CrbhbiyNWE4wStfrtfrVpXU76cK9jovyGd",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 8,
+       "origin": "Static",
+       "pubkey": "9dMrbDzoV19Aab86WPdGaWoKemVgkdwaBEzW4x8mi6Kw",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 9,
+       "origin": "LutReadonly",
+       "pubkey": "FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 10,
+       "origin": "Static",
+       "pubkey": "7xQYoUjUJF1Kg6WVczoTAkaNhn5syQYcbvjmFrhjWpx",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 11,
+       "origin": "LutReadonly",
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 12,
+       "origin": "Static",
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 13,
+       "origin": "Static",
+       "pubkey": "11111111111111111111111111111111",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 14,
+       "origin": "LutReadonly",
+       "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 15,
+       "origin": "LutReadonly",
+       "pubkey": "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 16,
+       "origin": "Static",
+       "pubkey": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 17,
+       "origin": "Static",
+       "pubkey": "Hx8BkSDeuVUqJAaJLPA4bPNBG9FU87v6nX9ZStH1Pr6B",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 18,
+       "origin": "Static",
+       "pubkey": "2DgMm8Cy2qdNAvHHxdkAcnVrhBBybUohN22hT5Ug7oEQ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 19,
+       "origin": "Static",
+       "pubkey": "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 20,
+       "origin": "LutReadonly",
+       "pubkey": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 21,
+       "origin": "Static",
+       "pubkey": "Gb1whM1LQEWWo4hvZkr8yToUect7fedPXmnygAgmWaYm",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 22,
+       "origin": "LutReadonly",
+       "pubkey": "GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 23,
+       "origin": "Static",
+       "pubkey": "AktftA98kSWAxn6kVSoqBXBELUArjKu2H9WmKB48ULFY",
+       "signer": false,
+       "writable": true
+      }
+     ],
+     "block_time": 1784161932,
+     "captured_at_ms": 1784162956057,
+     "class": "DirectTopLevel",
+     "data_b58": "5jRcjdixRUDTXH8wDVFGHribqF1TzstdD",
+     "decoded": {
+      "amount_in": 124006364012,
+      "min_out": 4182423845
+     },
+     "ix_index": 4,
+     "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+     "program_provenance": [
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433168247,
+       "program_data_address": "6naEzKeUuFh1Jeeu51NXQgr5qkXgXtc9WKNct4xynVJc",
+       "program_data_slot": 433112355,
+       "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      },
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433168247,
+       "program_data_address": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+       "program_data_slot": 420801948,
+       "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+      }
+     ],
+     "rejection_reason": null,
+     "route_id": "route1",
+     "schema_version": 1,
+     "signature": "Kv8qPxe2dE6xiHjqV3T33C9bhDua6vxdG1xzPVyuoFCJ76Ww56nyMrngCpx3iccPM87cQ3v8NLLGCGYLAUCPGvd",
+     "slot": 433168247,
+     "tx_version": "0",
+     "validation_status": "accepted",
+     "venue": "PumpSell"
+    }
+   ]
+  },
+  "route3:PumpSell": {
+   "route": "route3",
+   "pool": "8qDidAKuyNYKaR4dh2ZFZZVG5gBTUfyJcwQPgwt9FS1Y",
+   "mint": "DdPrHYqM8Ueovnk9kAnAgoGhswkuaTqmxcoZzU3Zpump",
+   "status": "SUFFICIENT",
+   "fixtures": [
+    {
+     "accounts": [
+      {
+       "index": 0,
+       "origin": "Static",
+       "pubkey": "8qDidAKuyNYKaR4dh2ZFZZVG5gBTUfyJcwQPgwt9FS1Y",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 1,
+       "origin": "Static",
+       "pubkey": "DcDjfh1nfGA4GUuq2eRhzN8hS8Zpa7KLMZREX4rMSJ4s",
+       "signer": true,
+       "writable": true
+      },
+      {
+       "index": 2,
+       "origin": "LutReadonly",
+       "pubkey": "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 3,
+       "origin": "Static",
+       "pubkey": "DdPrHYqM8Ueovnk9kAnAgoGhswkuaTqmxcoZzU3Zpump",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 4,
+       "origin": "LutReadonly",
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 5,
+       "origin": "Static",
+       "pubkey": "6wZKw3qADahi7T5ikPAuwWeWQBpGvzMWJGK6fGvpu9KU",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 6,
+       "origin": "Static",
+       "pubkey": "HbpRXx7Zn4EcGjyRkGDZbR9tttmwAi8XkyzPEgApxoqW",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 7,
+       "origin": "Static",
+       "pubkey": "8ghj67GbLriSaWFtgbe6cNj8FtC5Y5q8LMKqwjJTrhqC",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 8,
+       "origin": "Static",
+       "pubkey": "2GoBwcjXtQGc9tGzuF4tDrJYhoj6xRbCNTzowKAA9QFi",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 9,
+       "origin": "LutReadonly",
+       "pubkey": "FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 10,
+       "origin": "Static",
+       "pubkey": "7xQYoUjUJF1Kg6WVczoTAkaNhn5syQYcbvjmFrhjWpx",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 11,
+       "origin": "LutReadonly",
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 12,
+       "origin": "Static",
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 13,
+       "origin": "Static",
+       "pubkey": "11111111111111111111111111111111",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 14,
+       "origin": "Static",
+       "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 15,
+       "origin": "LutReadonly",
+       "pubkey": "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 16,
+       "origin": "Static",
+       "pubkey": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 17,
+       "origin": "Static",
+       "pubkey": "S8vxwRxGWMuDbCdhuoyRhL5tTfPqzbJxMk8c9Bk4ipz",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 18,
+       "origin": "Static",
+       "pubkey": "FvaYmsPFbhTnL7skCBdkrhEdpCAbPPTqxrCWJzCBzxze",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 19,
+       "origin": "LutReadonly",
+       "pubkey": "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 20,
+       "origin": "LutReadonly",
+       "pubkey": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 21,
+       "origin": "Static",
+       "pubkey": "7bnTP4fnUfjN7AT5EsikZ9FYSrhusEg9R9qp6i1kAZcf",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 22,
+       "origin": "Static",
+       "pubkey": "EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 23,
+       "origin": "Static",
+       "pubkey": "CA7v8gHfbquYXyDnDx6QxWW8hmL1H7X6Y2RYDrGLnuck",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 24,
+       "origin": "Static",
+       "pubkey": "7bnTP4fnUfjN7AT5EsikZ9FYSrhusEg9R9qp6i1kAZcf",
+       "signer": false,
+       "writable": false
+      }
+     ],
+     "block_time": 1784160444,
+     "captured_at_ms": 1784173662253,
+     "class": "DirectTopLevel",
+     "data_b58": "5jRcjdixRUDLz8sqj1YDxmNyDB1rPidoV",
+     "decoded": {
+      "amount_in": 765131227960,
+      "min_out": 4728397640
+     },
+     "ix_index": 3,
+     "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+     "program_provenance": [
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433164666,
+       "program_data_address": "6naEzKeUuFh1Jeeu51NXQgr5qkXgXtc9WKNct4xynVJc",
+       "program_data_slot": 433112355,
+       "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      },
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433164666,
+       "program_data_address": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+       "program_data_slot": 420801948,
+       "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+      }
+     ],
+     "rejection_reason": null,
+     "route_id": "route3",
+     "schema_version": 1,
+     "signature": "66WF7zUSSNSJzZjinq2bFgaXQ2N13Ny7BA4GixLG9taYMkgv7ywV2doNHXCwDj15tg1iHyYB59adgxoHCWUDVkAs",
+     "slot": 433164666,
+     "tx_version": "0",
+     "validation_status": "accepted",
+     "venue": "PumpSell"
+    },
+    {
+     "accounts": [
+      {
+       "index": 0,
+       "origin": "Static",
+       "pubkey": "8qDidAKuyNYKaR4dh2ZFZZVG5gBTUfyJcwQPgwt9FS1Y",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 1,
+       "origin": "Static",
+       "pubkey": "64A4HMRTY1Ars3BLbTNsCyJRi7ctC6JSAugWmCoB7zTP",
+       "signer": true,
+       "writable": true
+      },
+      {
+       "index": 2,
+       "origin": "Static",
+       "pubkey": "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 3,
+       "origin": "Static",
+       "pubkey": "DdPrHYqM8Ueovnk9kAnAgoGhswkuaTqmxcoZzU3Zpump",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 4,
+       "origin": "Static",
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 5,
+       "origin": "Static",
+       "pubkey": "79PPv5LyYcn7KmAax3UhRQcFpw4XbEriHP7QUaoeJo2y",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 6,
+       "origin": "Static",
+       "pubkey": "EA1wb66keNTF2Nv5iNbmXjRe6U9vwyo9Dhk6mcaUDfEN",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 7,
+       "origin": "Static",
+       "pubkey": "8ghj67GbLriSaWFtgbe6cNj8FtC5Y5q8LMKqwjJTrhqC",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 8,
+       "origin": "Static",
+       "pubkey": "2GoBwcjXtQGc9tGzuF4tDrJYhoj6xRbCNTzowKAA9QFi",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 9,
+       "origin": "Static",
+       "pubkey": "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 10,
+       "origin": "Static",
+       "pubkey": "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 11,
+       "origin": "Static",
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 12,
+       "origin": "Static",
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 13,
+       "origin": "Static",
+       "pubkey": "11111111111111111111111111111111",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 14,
+       "origin": "Static",
+       "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 15,
+       "origin": "Static",
+       "pubkey": "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 16,
+       "origin": "Static",
+       "pubkey": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 17,
+       "origin": "Static",
+       "pubkey": "S8vxwRxGWMuDbCdhuoyRhL5tTfPqzbJxMk8c9Bk4ipz",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 18,
+       "origin": "Static",
+       "pubkey": "FvaYmsPFbhTnL7skCBdkrhEdpCAbPPTqxrCWJzCBzxze",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 19,
+       "origin": "Static",
+       "pubkey": "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 20,
+       "origin": "Static",
+       "pubkey": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 21,
+       "origin": "Static",
+       "pubkey": "7bnTP4fnUfjN7AT5EsikZ9FYSrhusEg9R9qp6i1kAZcf",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 22,
+       "origin": "Static",
+       "pubkey": "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 23,
+       "origin": "Static",
+       "pubkey": "GAFuhgcd328SkkBYHpfadzmef9hTGAFRCi9QoCnsZQug",
+       "signer": false,
+       "writable": true
+      }
+     ],
+     "block_time": 1784160145,
+     "captured_at_ms": 1784173664480,
+     "class": "DirectTopLevel",
+     "data_b58": "5jRcjdixRUDULxzwLWG7qwJkbveQAYG71",
+     "decoded": {
+      "amount_in": 11960097651,
+      "min_out": 139981816
+     },
+     "ix_index": 2,
+     "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+     "program_provenance": [
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433163949,
+       "program_data_address": "6naEzKeUuFh1Jeeu51NXQgr5qkXgXtc9WKNct4xynVJc",
+       "program_data_slot": 433112355,
+       "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      },
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433163949,
+       "program_data_address": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+       "program_data_slot": 420801948,
+       "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+      }
+     ],
+     "rejection_reason": null,
+     "route_id": "route3",
+     "schema_version": 1,
+     "signature": "4WtDKeqoo62LPS7QZVhnXWfoKH8Fmg6GKhMJk82VFe4CnhjdvQERjwnKGikkXFFg7DhV17Lkrk5yY1aBfiho6Qkk",
+     "slot": 433163949,
+     "tx_version": "0",
+     "validation_status": "accepted",
+     "venue": "PumpSell"
+    },
+    {
+     "accounts": [
+      {
+       "index": 0,
+       "origin": "Static",
+       "pubkey": "8qDidAKuyNYKaR4dh2ZFZZVG5gBTUfyJcwQPgwt9FS1Y",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 1,
+       "origin": "Static",
+       "pubkey": "Fxmyd3PeTMpVe7bWio4aKAtpkSruLqZYdnNWRq6GyqGt",
+       "signer": true,
+       "writable": true
+      },
+      {
+       "index": 2,
+       "origin": "Static",
+       "pubkey": "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 3,
+       "origin": "Static",
+       "pubkey": "DdPrHYqM8Ueovnk9kAnAgoGhswkuaTqmxcoZzU3Zpump",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 4,
+       "origin": "Static",
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 5,
+       "origin": "Static",
+       "pubkey": "FASyXvA9RN5nEVSeR5d1LisWtAL8ZWQEE8uTMFnRazWp",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 6,
+       "origin": "Static",
+       "pubkey": "Dt9KCVvKDM7MMUhMQfTkRzGrQwhts8e9iX9dpwjE4gu5",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 7,
+       "origin": "Static",
+       "pubkey": "8ghj67GbLriSaWFtgbe6cNj8FtC5Y5q8LMKqwjJTrhqC",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 8,
+       "origin": "Static",
+       "pubkey": "2GoBwcjXtQGc9tGzuF4tDrJYhoj6xRbCNTzowKAA9QFi",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 9,
+       "origin": "Static",
+       "pubkey": "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 10,
+       "origin": "Static",
+       "pubkey": "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 11,
+       "origin": "Static",
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 12,
+       "origin": "Static",
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 13,
+       "origin": "Static",
+       "pubkey": "11111111111111111111111111111111",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 14,
+       "origin": "Static",
+       "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 15,
+       "origin": "Static",
+       "pubkey": "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 16,
+       "origin": "Static",
+       "pubkey": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 17,
+       "origin": "Static",
+       "pubkey": "S8vxwRxGWMuDbCdhuoyRhL5tTfPqzbJxMk8c9Bk4ipz",
+       "signer": false,
+       "writable": true
+      },
+      {
+       "index": 18,
+       "origin": "Static",
+       "pubkey": "FvaYmsPFbhTnL7skCBdkrhEdpCAbPPTqxrCWJzCBzxze",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 19,
+       "origin": "Static",
+       "pubkey": "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 20,
+       "origin": "Static",
+       "pubkey": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 21,
+       "origin": "Static",
+       "pubkey": "7bnTP4fnUfjN7AT5EsikZ9FYSrhusEg9R9qp6i1kAZcf",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 22,
+       "origin": "Static",
+       "pubkey": "EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL",
+       "signer": false,
+       "writable": false
+      },
+      {
+       "index": 23,
+       "origin": "Static",
+       "pubkey": "CA7v8gHfbquYXyDnDx6QxWW8hmL1H7X6Y2RYDrGLnuck",
+       "signer": false,
+       "writable": true
+      }
+     ],
+     "block_time": 1784160145,
+     "captured_at_ms": 1784173663736,
+     "class": "DirectTopLevel",
+     "data_b58": "5jRcjdixRUDTSvJBRN6EEHgCz2XmnWCxf",
+     "decoded": {
+      "amount_in": 18564601708,
+      "min_out": 217257757
+     },
+     "ix_index": 2,
+     "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+     "program_provenance": [
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433163949,
+       "program_data_address": "6naEzKeUuFh1Jeeu51NXQgr5qkXgXtc9WKNct4xynVJc",
+       "program_data_slot": 433112355,
+       "program_id": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+      },
+      {
+       "current_matches_fixture": true,
+       "executable": true,
+       "fixture_slot": 433163949,
+       "program_data_address": "75Uu23mqWBb8LM8vDppqC1mQAnCcBuLXhVaDezVMQLRw",
+       "program_data_slot": 420801948,
+       "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+      }
+     ],
+     "rejection_reason": null,
+     "route_id": "route3",
+     "schema_version": 1,
+     "signature": "4ty8bFZQMU9UJNsFxi2CVZRLwNcbBg7KasnTftSKSnvPjqrfac4e8XFiWs4QJzz5JqViFrifGQReKzwQhJz8Z1tq",
+     "slot": 433163949,
+     "tx_version": "0",
+     "validation_status": "accepted",
+     "venue": "PumpSell"
+    }
+   ]
+  }
+ }
+}
