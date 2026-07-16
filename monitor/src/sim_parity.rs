@@ -114,6 +114,13 @@ pub fn event_authority(program: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"__event_authority"], program).0
 }
 
+/// DLMM `bin_array_bitmap_extension` PDA (seed `["bitmap", lb_pair]`). This is
+/// the optional account passed at swap2 index [1]; when a pool has no extension
+/// Anchor substitutes the program id as a None sentinel instead.
+pub fn bitmap_extension_pda(pair: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"bitmap", pair.as_ref()], &dlmm_program()).0
+}
+
 /// Bin-array PDA (same derivation used by the observe tools).
 pub fn bin_array_pda(pair: &Pubkey, index: i64) -> Pubkey {
     Pubkey::find_program_address(

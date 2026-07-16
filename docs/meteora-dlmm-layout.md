@@ -141,3 +141,37 @@ exercising limit orders, OnlyY fee mode, and a Token-2022 X mint.
   quoted.
 - Larger parity sample (incl. multi-array crossings and an `InputOnly` pool)
   should accumulate in S9 before live eligibility (Gate 2).
+
+## `swap2` instruction layout — reconstruction evidence (S13C slice 4)
+
+Machine-readable evidence: `monitor/fixtures/meteora/swap2_cpi_fixtures.json`.
+Validated deterministically by `monitor/src/meteora_reconstruct.rs` tests.
+
+**HONESTY FINDING.** There are **no direct top-level Meteora swaps** on the
+supported pairs — every swap is Jupiter/CPI-routed. The captured fixtures are
+**CPI-exposed** `swap2` instructions (they expose the exact DLMM instruction +
+account metas) but they do **not** satisfy the three-DIRECT-fixture bar. Route 3
+(`DdZuEHGSH9LAte28K8SqeewcKQ96k6fXgj7zuWHqNWkv`) has **no** Meteora fixtures.
+
+- Variant: `swap2`, discriminator `414b3f4ceb5b5b88`. (`swap` v1 disc
+  `f8c69e91e17587c8` is rejected as not-swap2.)
+- Data (28 bytes): `disc(8) | amount_in:u64 | min_amount_out:u64 |
+  remaining_accounts_info`. The trailing `remaining_accounts_info` was the empty
+  encoding `00000000` in **every** observed fixture. Reconstructed byte-exact;
+  the tail is preserved verbatim, never guessed.
+- Accounts: 16 fixed (IDL order) + N trailing bin arrays (1–3 observed).
+
+| idx | role | provenance |
+|---|---|---|
+| 0 | lb_pair | route pair |
+| 1 | bin_array_bitmap_extension | **PDA** `["bitmap", pair]` when present, else program-id None-sentinel — both proven against real fixtures |
+| 8 | oracle | **PDA** `["oracle", pair]` ✅ (equals the pair's stored oracle) |
+| 9 | host_fee_in | program-id None-sentinel |
+| 11 | token_x_program | Token-2022 (`Tokenz…`) — matches pair flag |
+| 12 | token_y_program | SPL Token (`Tokenkeg…`) — WSOL |
+| 14 | event_authority | **PDA** `["__event_authority"]` ✅ |
+| 16+ | bin arrays | **PDA** `["bin_array", pair, index_le]`; each must belong to THIS pair; indices strictly monotonic in the traversal direction (descending observed = price-down/sell) |
+
+Negative tests reject: wrong variant, non-byte-exact data, wrong oracle,
+foreign bin array, and non-monotonic bin-array order. Token-2022 is present on
+token_x but no transfer-fee modelling is asserted here (screening duty, above).

@@ -1,0 +1,478 @@
+{
+ "schema_version": 1,
+ "venue": "meteora_dlmm",
+ "instruction_variant": "swap2",
+ "swap2_discriminator": "414b3f4ceb5b5b88",
+ "swap_discriminator": "f8c69e91e17587c8",
+ "data_format": "disc(8)|amount_in:u64|min_amount_out:u64|remaining_accounts_info(bytes, empty=00000000)",
+ "note": "NO direct top-level Meteora swaps exist on these pairs (Jupiter/CPI only). These are CPI-exposed swap2 instructions, labelled evidence, NOT counted toward the 3-direct-fixture bar.",
+ "program_provenance": {
+  "program_id": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+  "program_data_slot": 423977638
+ },
+ "routes": {
+  "route1": {
+   "route": "route1",
+   "pair": "CnK82s8exdsK9nwqQ55kd9wcxoA22NwTchZJCBdu8LDa",
+   "active_id": -444,
+   "bin_step": 80,
+   "token_x_mint": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+   "token_y_mint": "So11111111111111111111111111111111111111112",
+   "reserve_x": "2AdZHcsXgz7eAf4FK4ghr9UTsuMQMJMtWgFPD38iYHwz",
+   "reserve_y": "2rCBBjTiAWp5mU1uxtndQbodwhcRoBw9S98oZVwceU4H",
+   "oracle": "CtDc56iE4BAWxnaRRVY7hv9GSLgZmZkmBVFbSaEmKeni",
+   "token_x_program_flag": 1,
+   "token_y_program_flag": 0,
+   "direct_fixtures": 0,
+   "cpi_fixtures": [
+    {
+     "sig": "ujbq7RzYXz9SEhJaDm89cTpAKwZP9E2dCNzHDM45RTZ525E4cwAsamwPmmwmUpXQoxeQqFRoRhfbrtX3Gxq4gNy",
+     "slot": 433298678,
+     "block_time": 1784215645,
+     "variant": "swap2",
+     "data_hex": "414b3f4ceb5b5b881733f90800000000010000000000000000000000",
+     "amount_in": 150549271,
+     "min_amount_out": 1,
+     "remaining_accounts_info_hex": "00000000",
+     "n_accounts": 19,
+     "bin_array_count": 3,
+     "accounts": [
+      {
+       "i": 0,
+       "pubkey": "CnK82s8exdsK9nwqQ55kd9wcxoA22NwTchZJCBdu8LDa",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 1,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 2,
+       "pubkey": "2AdZHcsXgz7eAf4FK4ghr9UTsuMQMJMtWgFPD38iYHwz",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 3,
+       "pubkey": "2rCBBjTiAWp5mU1uxtndQbodwhcRoBw9S98oZVwceU4H",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 4,
+       "pubkey": "23Uk3eDyyUvaqyD2C9unBu4cPg2PbvbCuNFCrewRyqti",
+       "signer": false,
+       "writable": true,
+       "origin": "static"
+      },
+      {
+       "i": 5,
+       "pubkey": "DT2krA8vSP96D68nH86eAztZHVM18YB5i4gDXjLBDXm7",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 6,
+       "pubkey": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 7,
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 8,
+       "pubkey": "CtDc56iE4BAWxnaRRVY7hv9GSLgZmZkmBVFbSaEmKeni",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 9,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 10,
+       "pubkey": "ARu4n5mFdZogZAravu7CcizaojWnS6oqka37gdLT5SZn",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 11,
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 12,
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 13,
+       "pubkey": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 14,
+       "pubkey": "D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 15,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 16,
+       "pubkey": "999BRHcUjv7ipRxJ4vcojzuwy6ehGsJRCnnJQgB66QEX",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 17,
+       "pubkey": "Hp5HyefTrNurtnWaQxjn3udUXLJyDJfsDNGibYS8NfBU",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 18,
+       "pubkey": "5yCKY4cWwHEQaJ2HExkrKqZRE4DYoroE2D8i9y6CiHHZ",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      }
+     ],
+     "bin_arrays": [
+      "999BRHcUjv7ipRxJ4vcojzuwy6ehGsJRCnnJQgB66QEX",
+      "Hp5HyefTrNurtnWaQxjn3udUXLJyDJfsDNGibYS8NfBU",
+      "5yCKY4cWwHEQaJ2HExkrKqZRE4DYoroE2D8i9y6CiHHZ"
+     ]
+    },
+    {
+     "sig": "668RSR5RTN3MmEWXcpWVb4mxMRsintQRSnH2WB7tFLx3t9i4bTCMvy53aXzZddusVaFeKtL3iR1VJGfcb4er6VsD",
+     "slot": 433297838,
+     "block_time": 1784215294,
+     "variant": "swap2",
+     "data_hex": "414b3f4ceb5b5b885d8729efa7000000000000000000000000000000",
+     "amount_in": 721272014685,
+     "min_amount_out": 0,
+     "remaining_accounts_info_hex": "00000000",
+     "n_accounts": 17,
+     "bin_array_count": 1,
+     "accounts": [
+      {
+       "i": 0,
+       "pubkey": "CnK82s8exdsK9nwqQ55kd9wcxoA22NwTchZJCBdu8LDa",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 1,
+       "pubkey": "9QFEcrEwqimLcVDmbFzq6saRH1YEbynDN1zNhUn8MPDN",
+       "signer": false,
+       "writable": true,
+       "origin": "static"
+      },
+      {
+       "i": 2,
+       "pubkey": "2AdZHcsXgz7eAf4FK4ghr9UTsuMQMJMtWgFPD38iYHwz",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 3,
+       "pubkey": "2rCBBjTiAWp5mU1uxtndQbodwhcRoBw9S98oZVwceU4H",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 4,
+       "pubkey": "DMKmSdh95dVjXbS4rq4qvk7i1iAPTavT5zbE6opynPPu",
+       "signer": false,
+       "writable": true,
+       "origin": "static"
+      },
+      {
+       "i": 5,
+       "pubkey": "CiGNJ3if2LX3pks5run3FLbkoPfhzRSdiRFT4GG1SzQi",
+       "signer": false,
+       "writable": true,
+       "origin": "static"
+      },
+      {
+       "i": 6,
+       "pubkey": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 7,
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 8,
+       "pubkey": "CtDc56iE4BAWxnaRRVY7hv9GSLgZmZkmBVFbSaEmKeni",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 9,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 10,
+       "pubkey": "HTb7jFbK6hnvc92XSJtrGYyShGKaLaGPcCdfpq6jtPL1",
+       "signer": true,
+       "writable": true,
+       "origin": "static"
+      },
+      {
+       "i": 11,
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 12,
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 13,
+       "pubkey": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 14,
+       "pubkey": "D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 15,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 16,
+       "pubkey": "999BRHcUjv7ipRxJ4vcojzuwy6ehGsJRCnnJQgB66QEX",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      }
+     ],
+     "bin_arrays": [
+      "999BRHcUjv7ipRxJ4vcojzuwy6ehGsJRCnnJQgB66QEX"
+     ]
+    },
+    {
+     "sig": "3Xs9j1yqc9RGsszkhRmvyGmA3K8jbdLJiv4crqaKFmAFLogVUMm1qhgX7MxdfJQdaw2vidKkjUkEmB92Wc7RGDVn",
+     "slot": 433297699,
+     "block_time": 1784215237,
+     "variant": "swap2",
+     "data_hex": "414b3f4ceb5b5b88d3b87641aa000000010000000000000000000000",
+     "amount_in": 731242739923,
+     "min_amount_out": 1,
+     "remaining_accounts_info_hex": "00000000",
+     "n_accounts": 19,
+     "bin_array_count": 3,
+     "accounts": [
+      {
+       "i": 0,
+       "pubkey": "CnK82s8exdsK9nwqQ55kd9wcxoA22NwTchZJCBdu8LDa",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 1,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 2,
+       "pubkey": "2AdZHcsXgz7eAf4FK4ghr9UTsuMQMJMtWgFPD38iYHwz",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 3,
+       "pubkey": "2rCBBjTiAWp5mU1uxtndQbodwhcRoBw9S98oZVwceU4H",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 4,
+       "pubkey": "23Uk3eDyyUvaqyD2C9unBu4cPg2PbvbCuNFCrewRyqti",
+       "signer": false,
+       "writable": true,
+       "origin": "static"
+      },
+      {
+       "i": 5,
+       "pubkey": "DT2krA8vSP96D68nH86eAztZHVM18YB5i4gDXjLBDXm7",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 6,
+       "pubkey": "FeMbDoX7R1Psc4GEcvJdsbNbZA3bfztcyDCatJVJpump",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 7,
+       "pubkey": "So11111111111111111111111111111111111111112",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 8,
+       "pubkey": "CtDc56iE4BAWxnaRRVY7hv9GSLgZmZkmBVFbSaEmKeni",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 9,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 10,
+       "pubkey": "ARu4n5mFdZogZAravu7CcizaojWnS6oqka37gdLT5SZn",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 11,
+       "pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 12,
+       "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 13,
+       "pubkey": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 14,
+       "pubkey": "D1ZN9Wj1fRSUQfCjhvnu1hqDMT7hzjzBBpi12nVniYD6",
+       "signer": false,
+       "writable": false,
+       "origin": "lut_r"
+      },
+      {
+       "i": 15,
+       "pubkey": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 16,
+       "pubkey": "999BRHcUjv7ipRxJ4vcojzuwy6ehGsJRCnnJQgB66QEX",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 17,
+       "pubkey": "Hp5HyefTrNurtnWaQxjn3udUXLJyDJfsDNGibYS8NfBU",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      },
+      {
+       "i": 18,
+       "pubkey": "5yCKY4cWwHEQaJ2HExkrKqZRE4DYoroE2D8i9y6CiHHZ",
+       "signer": false,
+       "writable": true,
+       "origin": "lut_w"
+      }
+     ],
+     "bin_arrays": [
+      "999BRHcUjv7ipRxJ4vcojzuwy6ehGsJRCnnJQgB66QEX",
+      "Hp5HyefTrNurtnWaQxjn3udUXLJyDJfsDNGibYS8NfBU",
+      "5yCKY4cWwHEQaJ2HExkrKqZRE4DYoroE2D8i9y6CiHHZ"
+     ]
+    }
+   ]
+  },
+  "route3": {
+   "route": "route3",
+   "pair": "DdZuEHGSH9LAte28K8SqeewcKQ96k6fXgj7zuWHqNWkv",
+   "direct_fixtures": 0,
+   "cpi_fixtures": [],
+   "status": "NO_METEORA_FIXTURES"
+  }
+ }
+}
