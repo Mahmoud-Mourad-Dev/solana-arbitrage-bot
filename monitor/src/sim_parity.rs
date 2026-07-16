@@ -62,7 +62,7 @@ impl SafetyGate {
         live_marker_present: bool,
         live_marker_path: &str,
     ) -> Result<(), SafetyRefusal> {
-        if mode.trim().to_ascii_lowercase() != "simulate" {
+        if !mode.trim().eq_ignore_ascii_case("simulate") {
             return Err(SafetyRefusal::ModeNotSimulate(mode.to_string()));
         }
         if enable_submit {
@@ -121,6 +121,42 @@ pub fn bin_array_pda(pair: &Pubkey, index: i64) -> Pubkey {
         &dlmm_program(),
     )
     .0
+}
+
+// ─────────────────────── Pump PDAs (evidence-validated) ───────────────────────
+
+pub const PUMP_PROGRAM_ID: &str = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA";
+/// The separate Pump "fees v2" program (owner of fee-config accounts [19,22]).
+pub const PUMP_FEE_PROGRAM_ID: &str = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ";
+pub const ATA_PROGRAM_ID: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+
+pub fn pump_program() -> Pubkey {
+    Pubkey::from_str(PUMP_PROGRAM_ID).unwrap()
+}
+
+/// Pump `global_config` PDA (verified: == sell account [2] on every pool).
+pub fn pump_global_config() -> Pubkey {
+    Pubkey::find_program_address(&[b"global_config"], &pump_program()).0
+}
+
+/// Pump coin-creator vault authority PDA (verified: == sell account [18]).
+pub fn coin_creator_vault_authority(coin_creator: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"creator_vault", coin_creator.as_ref()], &pump_program()).0
+}
+
+/// Associated token account address for (owner, mint, token_program).
+pub fn derive_ata(owner: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[owner.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &Pubkey::from_str(ATA_PROGRAM_ID).unwrap(),
+    )
+    .0
+}
+
+/// Coin-creator vault quote ATA (verified: == sell account [17]).
+pub fn coin_creator_vault_ata(coin_creator: &Pubkey, quote_mint: &Pubkey) -> Pubkey {
+    let auth = coin_creator_vault_authority(coin_creator);
+    derive_ata(&auth, quote_mint, &Pubkey::from_str(TOKEN_PROGRAM).unwrap())
 }
 
 // ─────────────────────── DLMM swap instruction ───────────────────────

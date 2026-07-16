@@ -24,6 +24,7 @@ pub mod optimizer;
 pub mod parsers;
 pub mod pipeline;
 pub mod pump_amm;
+pub mod pump_evidence;
 pub mod quote;
 pub mod redis_sink;
 pub mod registry;
