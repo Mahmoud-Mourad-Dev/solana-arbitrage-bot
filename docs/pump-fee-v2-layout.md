@@ -137,3 +137,62 @@ follow-up before Pump legs can be trusted for profit math.**
 
 Verdict per route: `PUMP QUOTE MISMATCH` (root cause: fee-v2 per-pool fee rate,
 not a reconstruction/substitution/harness failure).
+
+## Slice-6B — fee-v2 authoritative source DECODED + parity PROVEN (S13C)
+
+Module: `pump_feev2.rs` (pure decoder). Fixture: `fee_config_5PHirr8.bin` (the
+real fee-program global config [19]). Re-test: `sim-pump-sell`. Repricing:
+`reprice-pump-fees` + `pump_reprice.rs`.
+
+**Authoritative fee source.** The Pump sell fee is DYNAMIC and lives in the
+fee-program global config `[19]` (`5PHirr8j…`, owned by `pfeeUxB6…`, disc
+`8f3492bbdb7b4c9b`). It holds a fixed **24-entry market-cap tier table**. Each
+entry is 40 bytes:
+
+| field | offset (rel) | type | value |
+|---|---|---|---|
+| market_cap_threshold | +0 | u64 LE | lamports, strictly ascending |
+| (pad) | +8 | u64 | 0 |
+| lp_bps | +16 | u64 | **20** (constant) |
+| protocol_bps | +24 | u64 | **5** (constant) |
+| creator_bps | +32 | u64 | **95 → 5**, non-increasing |
+
+The first table begins at byte offset 109 (NOT 8-aligned); the decoder locates
+it structurally (first ≥16-entry stride-40 run with lp=20/protocol=5, ascending
+thresholds, non-increasing creator) rather than by magic offset, and rejects a
+changed layout with a typed error. (A second, differently-scaled 24-entry table
+begins at 1113 and is NOT the AMM schedule.)
+
+**Fee rule (proven byte-exact).**
+`market_cap = base_mint_supply · quote_reserve / base_reserve`; the tier is the
+highest whose `threshold ≤ market_cap`; `total = lp + protocol + creator` bps,
+each charged with **independent ceil** on the fee-less CPMM gross. The legacy
+30 bps is simply the top tier (creator=5) at high market cap — one universal
+schedule, not a separate model.
+
+**Static or dynamic?** DYNAMIC — market-cap tiered, per pool, changing over
+time. Directly observed: Route 3 moved **95 → 90 bps** between two runs as its
+market cap crossed a tier boundary; the decoder tracked it and matched the
+on-chain sim exactly both times.
+
+**Parity re-test (verdict `PUMP FEE-V2 PARITY PROVEN`, both routes).** With the
+decoded fee, `local WSOL net == simulated WSOL delta EXACTLY (abs 0, 0 bps)` on
+every clean-bracket sample and size, for Route 1 (75 bps) and Route 3 (90–95
+bps). CPMM gross exact, base delta == amount_in, same-state guard holds, all
+negatives still fail for their own reasons.
+
+**Corrected economics.** The Pump SELL output was overstated by `(real − 30)`
+bps of the Pump-leg notional (Route 1 ≈45 bps, Route 3 ≈65 bps).
+`reprice-pump-fees` applies this as a labelled **measured-current-rate
+sensitivity** (not exact historical repricing — no per-observation fee-config
+provenance). On the narrow JSONL present in the tree there are **0
+competitive-positive records**, so corrected capturable value = 0 there; the
+prior `0.1127 / 0.095 SOL/day` came from a larger dataset not in the working
+tree. Sensitivity: a 45–65 bps haircut on a full Pump leg exceeds the thin arb
+edge previously reported, so it very likely erases most/all competitive-positive
+episodes.
+
+**Economic gate.** Do NOT rely on the old `0.1127 / 0.095 SOL/day` figures. Until
+a fresh **fee-v2-correct** observe run demonstrates causal competitive value
+≈0.1 SOL/day or higher at realistic actuation, the recommendation is to
+**archive the strategy before any atomic composition**.

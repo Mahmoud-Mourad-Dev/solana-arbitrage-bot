@@ -78,3 +78,7 @@ path = "src/bin/sim_meteora_route1.rs"
 [[bin]]
 name = "sim-pump-sell"
 path = "src/bin/sim_pump_sell.rs"
+
+[[bin]]
+name = "reprice-pump-fees"
+path = "src/bin/reprice_pump_fees.rs"

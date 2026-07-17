@@ -13,7 +13,8 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use arb_monitor::fixture_capture::b58_decode;
-use arb_monitor::pump_amm::{decode_pump_pool, pump_quote_detailed, PumpAmmPool};
+use arb_monitor::pump_amm::{decode_pump_pool, sell_quote_with_fee_split, PumpAmmPool};
+use arb_monitor::pump_feev2::{decode_fee_config, market_cap, FeeConfig};
 use arb_monitor::pump_reconstruct::{decode_sell_data, reconstruct_sell_data, SELL_DISCRIMINATOR};
 use arb_monitor::sim_parity::SafetyGate;
 use base64::Engine;
@@ -86,7 +87,7 @@ fn find_fresh_sell(rpc: &RpcClient, pool: &Pubkey, mint: &Pubkey) -> Result<Clon
     let sigs = rpc
         .get_signatures_for_address(pool)
         .context("get_signatures_for_address")?;
-    for si in sigs.iter().filter(|s| s.err.is_none()).take(60) {
+    for si in sigs.iter().filter(|s| s.err.is_none()).take(150) {
         let sig = solana_sdk::signature::Signature::from_str(&si.signature)?;
         let cfg = RpcTransactionConfig {
             encoding: Some(UiTransactionEncoding::JsonParsed),
@@ -496,6 +497,26 @@ fn run_route(rpc: &RpcClient, route: &Route) -> Result<&'static str> {
         &wsol_ata.to_string()[..8],
     );
 
+    // ── fee-v2: decode the fee-program config [19] + base-mint supply. ──
+    let fee_cfg: FeeConfig = decode_fee_config(
+        &rpc.get_account(&cloned.accounts[19].0)
+            .context("fee config [19]")?
+            .data,
+    )
+    .map_err(|e| anyhow!("decode fee config: {e:?}"))?;
+    let base_supply: u64 = rpc
+        .get_token_supply(&mint_k)
+        .context("base mint supply")?
+        .amount
+        .parse()
+        .unwrap_or(0);
+    println!(
+        "[fee-v2] config [19]={} tiers={} base_supply={}",
+        &cloned.accounts[19].0.to_string()[..8],
+        fee_cfg.tiers.len(),
+        base_supply
+    );
+
     // ── Step 6: simulate the reconstructed sell UNCHANGED (original seller). ──
     let watch = vec![wsol_ata, holder_ata];
     let step6_slot = rpc.get_slot().unwrap_or(0);
@@ -542,10 +563,19 @@ fn run_route(rpc: &RpcClient, route: &Route) -> Result<&'static str> {
         )?;
         any_clean |= clean;
         let (base_res, quote_res) = res;
-        let local = pump_quote_detailed(&pool, &pool.base_mint, amt, base_res, quote_res);
+        // fee-v2: market cap → tier → [lp, protocol, creator] split for THIS state.
+        let mc = market_cap(base_supply, base_res, quote_res);
+        let (split, tier_bps) = match mc {
+            Ok(mc) => {
+                let t = fee_cfg.tier_for(mc);
+                ([t.lp_bps, t.protocol_bps, t.creator_bps], t.total_bps())
+            }
+            Err(_) => ([20, 5, 5], 30),
+        };
+        let local = sell_quote_with_fee_split(amt, base_res, quote_res, split);
         println!(
-            "\n[7/8] {} amount={} entered={} success={} units={:?} tx={}B accounts={} clean_bracket={} slot={} reserves=({},{})",
-            label, amt, r.entered_pump, r.success, r.units, r.tx_size, r.accounts, clean, mslot, base_res, quote_res
+            "\n[7/8] {} amount={} entered={} success={} units={:?} tx={}B accounts={} clean_bracket={} slot={} reserves=({},{}) fee_v2_tier={}bps split={:?}",
+            label, amt, r.entered_pump, r.success, r.units, r.tx_size, r.accounts, clean, mslot, base_res, quote_res, tier_bps, split
         );
         if !r.success {
             for l in err_logs(&r.logs) {
@@ -624,14 +654,15 @@ fn run_route(rpc: &RpcClient, route: &Route) -> Result<&'static str> {
     if !negatives_ok {
         println!("        (a negative control did not fail — result not trusted)");
     }
+    // Slice-6B verdict vocabulary (fee-v2 model re-test).
     let verdict = if !negatives_ok || !any_clean {
         "INSUFFICIENT VALID SAMPLES"
     } else if accounting_unresolved {
-        "TOKEN ACCOUNTING UNRESOLVED"
-    } else if proven_any {
-        "PUMP DIRECT PARITY PROVEN"
+        "DYNAMIC FEE SOURCE UNRESOLVED"
+    } else if proven_any && !mismatch_seen {
+        "PUMP FEE-V2 PARITY PROVEN"
     } else if mismatch_seen {
-        "PUMP QUOTE MISMATCH"
+        "PUMP FEE-V2 MODEL MISMATCH"
     } else {
         "INSUFFICIENT VALID SAMPLES"
     };

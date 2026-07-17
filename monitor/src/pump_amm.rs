@@ -56,12 +56,44 @@ pub const CREATOR_LP_BPS: u64 = 20;
 pub const CREATOR_FEE_BPS: u64 = 5;
 
 /// The three fee components (lp, protocol, creator) in bps for a pool.
+///
+/// NOTE (S13C slice 6B): this LEGACY split is correct only for the top
+/// market-cap tier (creator=5 → 30 bps total). Current Pump pools use the
+/// DYNAMIC fee-v2 schedule read from the fee-program config — see
+/// [`crate::pump_feev2`] and [`sell_quote_with_fee_split`]. Do not use this
+/// legacy split to quote a fee-v2 pool; it under-charges the fee.
 pub fn fee_split(has_creator: bool) -> [u64; 3] {
     if has_creator {
         [CREATOR_LP_BPS, PROTOCOL_FEE_BPS, CREATOR_FEE_BPS]
     } else {
         [NO_CREATOR_LP_BPS, PROTOCOL_FEE_BPS, 0]
     }
+}
+
+/// SELL quote (base in → quote out) with an EXPLICIT fee split `[lp, protocol,
+/// creator]` in bps — the caller supplies the current fee-v2 tier (from
+/// [`crate::pump_feev2`]). Returns the net output and the total DEX fee (quote
+/// units). The fee-less CPMM gross is identical to the legacy path; only the fee
+/// rate is caller-provided. This is the fee-v2-correct SELL quote.
+pub fn sell_quote_with_fee_split(
+    amount_in: u64,
+    base_reserve: u64,
+    quote_reserve: u64,
+    fee_split_bps: [u64; 3],
+) -> Result<PumpQuoteDetail, PumpQuoteError> {
+    if base_reserve == 0 || quote_reserve == 0 {
+        return Err(PumpQuoteError::EmptyReserves);
+    }
+    if amount_in == 0 {
+        return Err(PumpQuoteError::NoFill);
+    }
+    let gross = crate::math::cpmm_amount_out(amount_in, base_reserve, quote_reserve, 0, 10_000);
+    let fee = total_fee(gross, fee_split_bps);
+    let out = gross.saturating_sub(fee);
+    if out == 0 {
+        return Err(PumpQuoteError::NoFill);
+    }
+    Ok(PumpQuoteDetail { out, fee })
 }
 
 fn ceil_div(a: u128, b: u128) -> u128 {
