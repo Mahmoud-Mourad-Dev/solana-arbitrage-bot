@@ -345,6 +345,9 @@ mod tests {
             },
             base_reserve: br,
             quote_reserve: qr,
+            base_mint_supply: 1_000_000_000,
+            // No-creator legacy split [25,5,0] = 30 bps (preserves prior tests).
+            fee_config: crate::pump_feev2::FeeConfig::flat(25, 5, 0),
         }
     }
 
@@ -445,6 +448,8 @@ mod tests {
             pool,
             base_reserve: 100_000_000_000_000,
             quote_reserve: 100_000_000_000_000,
+            base_mint_supply: 1_000_000_000,
+            fee_config: crate::pump_feev2::FeeConfig::flat(20, 5, 5),
         };
         let leg2 = pump_leg(token, wsol(), 100_000_000_000_000, 100_000_000_000_000);
         let route = Route { leg1, leg2 };
@@ -504,6 +509,8 @@ mod tests {
                 pool,
                 base_reserve: 1_000_000_000_000,
                 quote_reserve: 1_000_000_000_000,
+                base_mint_supply: 1_000_000_000,
+                fee_config: crate::pump_feev2::FeeConfig::flat(20, 5, 5),
             },
             leg2: pump_leg(token, wsol(), 1_000_000_000_000, 1_000_000_000_000),
         };

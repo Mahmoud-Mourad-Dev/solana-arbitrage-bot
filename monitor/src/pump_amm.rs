@@ -205,6 +205,10 @@ pub enum PumpQuoteError {
     /// until the exact on-chain rounding is pinned. Such a pool can still be
     /// used as the SELL leg (base in → quote out), which IS exact.
     CreatorBuyUnverified,
+    /// The dynamic fee-v2 rate could not be resolved from the snapshot — the
+    /// quote is REFUSED (never an optimistic 30 bps fallback). See
+    /// [`crate::pump_feev2::FeeV2Error`].
+    FeeV2(crate::pump_feev2::FeeV2Error),
 }
 
 /// The quote-token input `C` that actually enters the pool for a BUY of
@@ -288,6 +292,78 @@ pub fn pump_quote_detailed(
         return Err(PumpQuoteError::NoFill);
     }
     Ok(PumpQuoteDetail { out, fee })
+}
+
+/// The fee-v2 rate + provenance selected for a quote (for recording).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PumpFeeV2Detail {
+    pub market_cap: u128,
+    pub tier_index: usize,
+    pub lp_bps: u64,
+    pub protocol_bps: u64,
+    pub creator_bps: u64,
+    pub total_bps: u64,
+}
+
+/// Resolve the dynamic fee-v2 tier for a pool from a single-slot snapshot
+/// (reserves + base-mint supply + decoded fee config). Typed error, never a
+/// fallback rate.
+pub fn resolve_fee_v2(
+    base_reserve: u64,
+    quote_reserve: u64,
+    base_mint_supply: u64,
+    fee_config: &crate::pump_feev2::FeeConfig,
+) -> Result<PumpFeeV2Detail, PumpQuoteError> {
+    let mc = crate::pump_feev2::market_cap(base_mint_supply, base_reserve, quote_reserve)
+        .map_err(PumpQuoteError::FeeV2)?;
+    let idx = fee_config
+        .tiers
+        .iter()
+        .rposition(|t| (t.market_cap_threshold as u128) <= mc)
+        .unwrap_or(0);
+    let t = &fee_config.tiers[idx];
+    Ok(PumpFeeV2Detail {
+        market_cap: mc,
+        tier_index: idx,
+        lp_bps: t.lp_bps,
+        protocol_bps: t.protocol_bps,
+        creator_bps: t.creator_bps,
+        total_bps: t.total_bps(),
+    })
+}
+
+/// PumpSwap quote using the DYNAMIC fee-v2 model (S13C slice 6C). The fee tier
+/// is computed from the SAME single-slot snapshot (pre-trade market cap —
+/// proven by simulation to match on-chain; identical across sizes in a
+/// snapshot). SELL is exact; BUY on a fee-bearing pool is refused (creator bps
+/// are always > 0 under fee-v2, and creator-pool BUY inversion is unverified).
+/// NEVER falls back to the legacy 30 bps.
+pub fn pump_quote_detailed_v2(
+    pool: &PumpAmmPool,
+    input_mint: &Pubkey,
+    amount_in: u64,
+    base_reserve: u64,
+    quote_reserve: u64,
+    base_mint_supply: u64,
+    fee_config: &crate::pump_feev2::FeeConfig,
+) -> Result<PumpQuoteDetail, PumpQuoteError> {
+    if base_reserve == 0 || quote_reserve == 0 {
+        return Err(PumpQuoteError::EmptyReserves);
+    }
+    if amount_in == 0 {
+        return Err(PumpQuoteError::NoFill);
+    }
+    let fee_v2 = resolve_fee_v2(base_reserve, quote_reserve, base_mint_supply, fee_config)?;
+    let split = [fee_v2.lp_bps, fee_v2.protocol_bps, fee_v2.creator_bps];
+    if input_mint == &pool.base_mint {
+        // SELL (base in → quote out): exact.
+        sell_quote_with_fee_split(amount_in, base_reserve, quote_reserve, split)
+    } else if input_mint == &pool.quote_mint {
+        // BUY: creator bps > 0 under fee-v2 → inversion unverified, refuse.
+        Err(PumpQuoteError::CreatorBuyUnverified)
+    } else {
+        Err(PumpQuoteError::WrongMint)
+    }
 }
 
 #[cfg(test)]
@@ -553,5 +629,151 @@ mod tests {
         let out_b = pump_quote(&p, &p.quote_mint, amt_q, rb, rq).unwrap();
         let ideal_b = (amt_q as u128 * rb as u128 / rq as u128) as u64;
         assert!(out_b < ideal_b);
+    }
+
+    // ── Slice 6C: dynamic fee-v2 integration regression tests. ──
+    use crate::pump_feev2::{decode_fee_config, FeeConfig};
+
+    const FEE_CFG_BYTES: &[u8] = include_bytes!("../fixtures/pump/fee_config_5PHirr8.bin");
+
+    fn feev2_pool(base_mint: Pubkey, quote_mint: Pubkey) -> PumpAmmPool {
+        PumpAmmPool {
+            bump: 0,
+            index: 0,
+            creator: Pubkey::default(),
+            base_mint,
+            quote_mint,
+            lp_mint: Pubkey::default(),
+            base_vault: Pubkey::default(),
+            quote_vault: Pubkey::default(),
+            lp_supply: 0,
+            coin_creator: Pubkey::default(),
+        }
+    }
+
+    #[test]
+    fn route1_captured_state_resolves_75bps_and_sells_exact() {
+        let cfg = decode_fee_config(FEE_CFG_BYTES).unwrap();
+        // Route 1 captured single-slot state.
+        let (base_res, quote_res, supply) = (
+            52_559_268_744_521u64,
+            1_722_520_916_860u64,
+            999_678_618_479_009u64,
+        );
+        let fee = resolve_fee_v2(base_res, quote_res, supply, &cfg).unwrap();
+        assert_eq!(
+            (fee.lp_bps, fee.protocol_bps, fee.creator_bps, fee.total_bps),
+            (20, 5, 50, 75)
+        );
+        // SELL quote nets exactly gross − Σ ceil(gross·bps/1e4).
+        let base_mint = Pubkey::new_unique();
+        let pool = feev2_pool(base_mint, Pubkey::new_unique());
+        let amt = 44_114_312u64;
+        let q = pump_quote_detailed_v2(&pool, &base_mint, amt, base_res, quote_res, supply, &cfg)
+            .unwrap();
+        let gross = crate::math::cpmm_amount_out(amt, base_res, quote_res, 0, 10_000);
+        let expect = sell_quote_with_fee_split(amt, base_res, quote_res, [20, 5, 50]).unwrap();
+        assert_eq!(q, expect);
+        assert_eq!(q.out, gross - q.fee);
+    }
+
+    #[test]
+    fn route3_captured_state_resolves_expected_tier() {
+        let cfg = decode_fee_config(FEE_CFG_BYTES).unwrap();
+        // Route 3 captured state (≈13.7e12 mcap → creator 70 → 95 bps).
+        let fee = resolve_fee_v2(
+            58_271_548_974_899,
+            801_671_310_462,
+            998_934_621_420_585,
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(fee.total_bps, 95);
+        // A higher-market-cap state (lower fee) selects a cheaper tier — dynamic.
+        let fee_hi = resolve_fee_v2(
+            56_210_225_348_742,
+            831_147_255_886,
+            998_934_621_420_585,
+            &cfg,
+        )
+        .unwrap();
+        assert!(fee_hi.total_bps <= 95);
+    }
+
+    #[test]
+    fn all_sizes_in_one_snapshot_use_the_same_pretrade_tier() {
+        let cfg = decode_fee_config(FEE_CFG_BYTES).unwrap();
+        let (base_res, quote_res, supply) = (
+            52_559_268_744_521u64,
+            1_722_520_916_860u64,
+            999_678_618_479_009u64,
+        );
+        let base_mint = Pubkey::new_unique();
+        let pool = feev2_pool(base_mint, Pubkey::new_unique());
+        // Fee bps is a property of the snapshot (pre-trade mcap), size-independent.
+        for amt in [1_000_000u64, 11_638_009, 44_114_312, 500_000_000] {
+            let q =
+                pump_quote_detailed_v2(&pool, &base_mint, amt, base_res, quote_res, supply, &cfg)
+                    .unwrap();
+            let expect = sell_quote_with_fee_split(amt, base_res, quote_res, [20, 5, 50]).unwrap();
+            assert_eq!(q, expect, "size {amt}");
+        }
+    }
+
+    #[test]
+    fn no_optimistic_fallback_on_bad_inputs() {
+        let cfg = decode_fee_config(FEE_CFG_BYTES).unwrap();
+        let base_mint = Pubkey::new_unique();
+        let pool = feev2_pool(base_mint, Pubkey::new_unique());
+        // Zero supply → typed FeeV2 error, NOT a 30 bps fallback.
+        let e = pump_quote_detailed_v2(&pool, &base_mint, 1_000, 1_000, 1_000, 0, &cfg);
+        assert!(matches!(e, Err(PumpQuoteError::FeeV2(_))));
+        // Zero reserve → EmptyReserves (before fee resolution).
+        assert_eq!(
+            pump_quote_detailed_v2(&pool, &base_mint, 1_000, 0, 1_000, 1, &cfg),
+            Err(PumpQuoteError::EmptyReserves)
+        );
+    }
+
+    #[test]
+    fn monitor_and_optimizer_share_one_pump_fee_impl() {
+        // The route-engine Leg and the direct quote MUST return identical output
+        // for the same snapshot — they call the same fee-v2 implementation.
+        use crate::route_engine::Leg;
+        let cfg = decode_fee_config(FEE_CFG_BYTES).unwrap();
+        let (base_res, quote_res, supply) = (
+            52_559_268_744_521u64,
+            1_722_520_916_860u64,
+            999_678_618_479_009u64,
+        );
+        let base_mint = Pubkey::new_unique();
+        let quote_mint = Pubkey::new_unique();
+        let pool = feev2_pool(base_mint, quote_mint);
+        let amt = 9_000_000u64;
+        let leg = Leg::Pump {
+            pool: pool.clone(),
+            base_reserve: base_res,
+            quote_reserve: quote_res,
+            base_mint_supply: supply,
+            fee_config: cfg.clone(),
+        };
+        let via_leg = leg.quote_detailed(&base_mint, amt).unwrap();
+        let direct =
+            pump_quote_detailed_v2(&pool, &base_mint, amt, base_res, quote_res, supply, &cfg)
+                .unwrap();
+        assert_eq!(via_leg, (direct.out, direct.fee));
+    }
+
+    #[test]
+    fn flat_config_reproduces_legacy_30bps_split() {
+        // A positively-identified legacy-flat pool still charges 30 bps exactly.
+        let base_mint = Pubkey::new_unique();
+        let pool = feev2_pool(base_mint, Pubkey::new_unique());
+        let flat = FeeConfig::flat(25, 5, 0);
+        let (br, qr) = (1_000_000_000_000u64, 1_000_000_000_000u64);
+        let v2 = pump_quote_detailed_v2(&pool, &base_mint, 1_000_000, br, qr, 1_000_000_000, &flat)
+            .unwrap();
+        let legacy = pump_quote_detailed(&pool, &base_mint, 1_000_000, br, qr).unwrap();
+        assert_eq!(v2, legacy);
     }
 }

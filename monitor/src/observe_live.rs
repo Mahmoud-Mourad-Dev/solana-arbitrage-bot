@@ -91,6 +91,16 @@ fn token_amount(acc: &Account) -> Option<u64> {
     (acc.data.len() >= 72).then(|| u64::from_le_bytes(acc.data[64..72].try_into().unwrap()))
 }
 
+/// SPL / Token-2022 Mint `supply` (u64 @ offset 36).
+fn mint_supply(acc: &Account) -> Option<u64> {
+    (acc.data.len() >= 44).then(|| u64::from_le_bytes(acc.data[36..44].try_into().unwrap()))
+}
+
+/// The Pump fee-program GLOBAL config account ([19]) — one address for all
+/// pools (proven identical across routes 1 & 3). Owned by the fee program;
+/// its layout is validated on decode.
+pub const PUMP_FEE_CONFIG_ADDR: &str = "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx";
+
 pub fn bin_array_pda(pair: &Pubkey, index: i64, program: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(
         &[b"bin_array", pair.as_ref(), &index.to_le_bytes()],
@@ -162,9 +172,17 @@ pub async fn fetch_snapshot(
             return Err("pair_fetch");
         }
     };
+    let (Ok(fee_cfg_k), Ok(base_mint_k)) = (
+        Pubkey::from_str(PUMP_FEE_CONFIG_ADDR),
+        Pubkey::from_str(&m.token_mint),
+    ) else {
+        return Err("bad_key");
+    };
     let aidx = (active_id as i64).div_euclid(70);
     let idxs: Vec<i64> = (aidx - 2..=aidx + 2).collect();
-    let mut keys = vec![pool_k, bv, qv, pair_k];
+    // Fixed slots: [0]=pool [1]=base_vault [2]=quote_vault [3]=pair
+    // [4]=fee_config [5]=base_mint, then bin arrays. All one single-slot snapshot.
+    let mut keys = vec![pool_k, bv, qv, pair_k, fee_cfg_k, base_mint_k];
     keys.extend(
         idxs.iter()
             .map(|&i| bin_array_pda(&pair_k, i, &ctx.dlmm_prog)),
@@ -182,7 +200,14 @@ pub async fn fetch_snapshot(
     };
     let slot = resp.context.slot;
     let v = resp.value;
-    let (Some(pool_acc), Some(bv_acc), Some(qv_acc), Some(pair_acc)) = (&v[0], &v[1], &v[2], &v[3])
+    let (
+        Some(pool_acc),
+        Some(bv_acc),
+        Some(qv_acc),
+        Some(pair_acc),
+        Some(fee_cfg_acc),
+        Some(mint_acc),
+    ) = (&v[0], &v[1], &v[2], &v[3], &v[4], &v[5])
     else {
         return Err("missing_account");
     };
@@ -199,8 +224,16 @@ pub async fn fetch_snapshot(
     else {
         return Err("vault_decode");
     };
+    // fee-v2: decode the fee config + base-mint supply from the SAME snapshot.
+    // No optimistic fallback — a bad config fails the snapshot.
+    let Ok(fee_config) = crate::pump_feev2::decode_fee_config(&fee_cfg_acc.data) else {
+        return Err("fee_config_decode");
+    };
+    let Some(base_mint_supply) = mint_supply(mint_acc) else {
+        return Err("mint_supply_decode");
+    };
     let mut arrays: HashMap<i64, BinArray> = HashMap::new();
-    for (i, acc) in idxs.iter().zip(&v[4..]) {
+    for (i, acc) in idxs.iter().zip(&v[6..]) {
         if let Some(acc) = acc {
             if acc.owner == ctx.dlmm_prog {
                 if let Ok(ba) = decode_bin_array(&acc.data) {
@@ -218,6 +251,8 @@ pub async fn fetch_snapshot(
             pool,
             base_reserve,
             quote_reserve,
+            base_mint_supply,
+            fee_config,
         },
         dlmm_leg: Leg::Meteora {
             pair,

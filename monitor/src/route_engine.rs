@@ -12,7 +12,8 @@
 //! structured error and the route is rejected — never a fabricated fill.
 
 use crate::meteora_dlmm::{dlmm_quote_exact_in_detailed, BinArray, DlmmQuoteError, LbPair};
-use crate::pump_amm::{pump_quote_detailed, PumpAmmPool, PumpQuoteError};
+use crate::pump_amm::{pump_quote_detailed_v2, PumpAmmPool, PumpQuoteError};
+use crate::pump_feev2::FeeConfig;
 use arb_common::cost::CostModel;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
@@ -31,10 +32,14 @@ pub enum LegReject {
 pub enum Leg {
     /// PumpSwap: reserves are the live vault balances (base_reserve = balance
     /// of `pool.base_vault`, quote_reserve = balance of `pool.quote_vault`).
+    /// `base_mint_supply` + `fee_config` come from the SAME single-slot snapshot
+    /// and drive the DYNAMIC fee-v2 rate (slice 6C — no legacy 30 bps fallback).
     Pump {
         pool: PumpAmmPool,
         base_reserve: u64,
         quote_reserve: u64,
+        base_mint_supply: u64,
+        fee_config: FeeConfig,
     },
     /// Meteora DLMM: the pair plus every bin array the traversal may touch,
     /// and the cluster time used for volatility decay.
@@ -87,9 +92,19 @@ impl Leg {
                 pool,
                 base_reserve,
                 quote_reserve,
-            } => pump_quote_detailed(pool, input_mint, amount_in, *base_reserve, *quote_reserve)
-                .map(|d| (d.out, d.fee))
-                .map_err(LegReject::Pump),
+                base_mint_supply,
+                fee_config,
+            } => pump_quote_detailed_v2(
+                pool,
+                input_mint,
+                amount_in,
+                *base_reserve,
+                *quote_reserve,
+                *base_mint_supply,
+                fee_config,
+            )
+            .map(|d| (d.out, d.fee))
+            .map_err(LegReject::Pump),
             Leg::Meteora {
                 pair,
                 arrays,
@@ -262,6 +277,9 @@ mod tests {
             },
             base_reserve,
             quote_reserve,
+            base_mint_supply: 1_000_000_000,
+            // No-creator legacy split [25,5,0] = 30 bps (preserves prior tests).
+            fee_config: crate::pump_feev2::FeeConfig::flat(25, 5, 0),
         }
     }
 
@@ -361,6 +379,8 @@ mod tests {
             pool,
             base_reserve: 100_000_000_000_000,
             quote_reserve: 100_000_000_000_000,
+            base_mint_supply: 1_000_000_000,
+            fee_config: crate::pump_feev2::FeeConfig::flat(20, 5, 5),
         };
         let leg2 = pump_leg(token, wsol(), 100_000_000_000_000, 100_000_000_000_000);
         let route = Route { leg1, leg2 };

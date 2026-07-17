@@ -132,6 +132,20 @@ pub fn market_cap(
 }
 
 impl FeeConfig {
+    /// A single-tier flat schedule (threshold 0). For tests and for a pool whose
+    /// legacy-flat status is POSITIVELY identified — never as an implicit
+    /// fallback for a fee-v2 pool.
+    pub fn flat(lp_bps: u64, protocol_bps: u64, creator_bps: u64) -> Self {
+        FeeConfig {
+            tiers: vec![FeeTier {
+                market_cap_threshold: 0,
+                lp_bps,
+                protocol_bps,
+                creator_bps,
+            }],
+        }
+    }
+
     /// The applicable tier: the highest whose threshold ≤ market cap. Below the
     /// first threshold, the first (highest-fee) tier applies.
     pub fn tier_for(&self, market_cap: u128) -> &FeeTier {
@@ -263,5 +277,35 @@ mod tests {
     fn zero_reserve_is_typed_error() {
         assert_eq!(market_cap(1, 0, 1), Err(FeeV2Error::ZeroReserveOrSupply));
         assert_eq!(market_cap(0, 1, 1), Err(FeeV2Error::ZeroReserveOrSupply));
+    }
+
+    #[test]
+    fn tier_boundaries_are_deterministic() {
+        let c = cfg();
+        // For every tier: just-below → previous tier; exactly-at → this tier;
+        // just-above → this tier (until the next threshold).
+        for i in 1..c.tiers.len() {
+            let th = c.tiers[i].market_cap_threshold as u128;
+            assert_eq!(
+                c.tier_for(th - 1).creator_bps,
+                c.tiers[i - 1].creator_bps,
+                "just below tier {i}"
+            );
+            assert_eq!(
+                c.tier_for(th).creator_bps,
+                c.tiers[i].creator_bps,
+                "at tier {i}"
+            );
+            assert_eq!(
+                c.tier_for(th + 1).creator_bps,
+                c.tiers[i].creator_bps,
+                "just above tier {i}"
+            );
+        }
+        // Below the first threshold → the first (highest-fee) tier.
+        assert_eq!(c.tier_for(0).creator_bps, c.tiers[0].creator_bps);
+        // Above the last threshold → the last (lowest-fee, 5 bps) tier.
+        let huge = u128::from(u64::MAX);
+        assert_eq!(c.tier_for(huge).creator_bps, 5);
     }
 }
