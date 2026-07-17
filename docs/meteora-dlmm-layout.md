@@ -175,3 +175,42 @@ account metas) but they do **not** satisfy the three-DIRECT-fixture bar. Route 3
 Negative tests reject: wrong variant, non-byte-exact data, wrong oracle,
 foreign bin array, and non-monotonic bin-array order. Token-2022 is present on
 token_x but no transfer-fee modelling is asserted here (screening duty, above).
+
+## Direct-call simulation — Route 1 (S13C slice 5)
+
+Binary: `sim-meteora-route1` (MODE=simulate only; no sign/send/Jito/keypair).
+Privilege audit: `monitor/src/meteora_direct_call.rs`; direct swap2 builder:
+`sim_parity::build_dlmm_swap2_ix`.
+
+**Privilege audit (Stage 5.0).** Of the 16 fixed accounts, the IDL declares
+exactly ONE signer — `user` [10] — and it is user-substitutable. In the three
+CPI fixtures the authority was a real top-level signer once (an ordinary wallet)
+and a Jupiter PDA twice (caller-PDA signing); either way a direct call supplies
+our own authority, so no non-replaceable caller-PDA signer exists ⇒
+`PrivilegesResolvedViable`. Recorded tier-3 (IDL-inferred, not proven from inner
+metadata) privilege deltas: source marks [10] writable (fee payer) though the
+IDL is readonly; source marks [15] program writable. Simulation resolved these —
+building `user` as `signer, readonly` executes cleanly.
+
+**Direct top-level simulation (Stage 5.3).** A public wallet self-wraps 0.1 SOL
+(wSOL ATA create + native transfer + SyncNative), creates the Token-2022 dest
+ATA, and calls `swap2` directly (WSOL→token, Y→X walk-up). Result: the Meteora
+program is ENTERED and the swap COMPLETES; `~71.9k` CU; tx ~907 B / 22 accounts;
+**local Rust quote == simulated destination-token delta EXACTLY (0 abs, 0 bps)**;
+same-state guard held (snapshot hash unchanged across the sim). Token-2022 mint
+(`FeMbDoX7…pump`) has only metadata-pointer/token-metadata extensions — no
+transfer fee/hook — so gross == net and no extra remaining accounts are needed.
+
+Negative controls (all fail for their own DLMM reason, not a layout error):
+foreign-pair bin array → 3007 AccountOwnedByWrongProgram; missing active array →
+3005 AccountNotEnoughKeys; wrong bitmap-extension account → 3007; impossible
+min-out → 6003 ExceededAmountSlippageTolerance (swap2.rs:262).
+
+**Order-tolerance finding.** The DLMM program searches the remaining accounts for
+the array holding the active bin, so a REORDERED (reversed) set of valid arrays
+still succeeds — the monotonic order seen in the fixtures is a caller convention,
+not a program requirement. (The slice-4 reconstruction guard still enforces
+monotonicity as a fixture-provenance check; it is not a chain constraint.)
+
+Verdict: `METEORA DIRECT PARITY PROVEN` (Stage-1, Meteora-only). No Pump, no
+atomic composition, no signing/submit — those remain out of scope.

@@ -25,6 +25,8 @@ yellowstone-grpc-proto = "12"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 solana-account-decoder = "2.1"
 solana-transaction-status-client-types = "2.1"
+base64 = "0.22"
+bincode = "1"
 
 [dev-dependencies]
 base64 = "0.22"
@@ -68,3 +70,7 @@ path = "src/bin/rebuild_report.rs"
 [[bin]]
 name = "capture-parity-fixtures"
 path = "src/bin/capture_parity_fixtures.rs"
+
+[[bin]]
+name = "sim-meteora-route1"
+path = "src/bin/sim_meteora_route1.rs"

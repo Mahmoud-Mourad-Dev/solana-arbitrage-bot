@@ -17,6 +17,7 @@ pub mod fixture_capture;
 pub mod geyser;
 pub mod market_discovery;
 pub mod math;
+pub mod meteora_direct_call;
 pub mod meteora_dlmm;
 pub mod meteora_reconstruct;
 pub mod narrow_report;

@@ -298,6 +298,7 @@ dependencies = [
  "anyhow",
  "arb-common",
  "base64 0.22.1",
+ "bincode",
  "dotenvy",
  "futures",
  "redis",

@@ -22,6 +22,7 @@ pub const DLMM_SWAP_DISCRIMINATOR: [u8; 8] = [0xf8, 0xc6, 0x9e, 0x91, 0xe1, 0x75
 
 pub const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 pub const TOKEN_2022_PROGRAM: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+pub const MEMO_PROGRAM_ID: &str = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
 // ─────────────────────────── safety gate ───────────────────────────
 
@@ -234,6 +235,70 @@ pub fn build_dlmm_swap_ix(
     }
 }
 
+/// The `swap2` discriminator (validated byte-exact against real fixtures in
+/// `meteora_reconstruct`).
+pub const DLMM_SWAP2_DISCRIMINATOR: [u8; 8] = [0x41, 0x4b, 0x3f, 0x4c, 0xeb, 0x5b, 0x5b, 0x88];
+
+/// Build a DIRECT top-level Meteora DLMM `swap2` instruction (S13C slice 5).
+///
+/// Account order is the slice-4-validated swap2 layout: 16 fixed accounts
+/// (swap v1 + a `memo_program` at [13]) then the traversed bin arrays. The
+/// authority [10] is OUR public simulation user (the slice-5 privilege audit
+/// proved this is the sole signer and is user-substitutable). Optional
+/// `bitmap_extension` is the real `["bitmap", pair]` PDA when the pool has one,
+/// else the program id as the Anchor None sentinel. `host_fee_in` is always the
+/// None sentinel. Data carries the empty `remaining_accounts_info` (`00000000`)
+/// observed in every fixture. For `simulateTransaction` ONLY — never signed.
+#[allow(clippy::too_many_arguments)]
+pub fn build_dlmm_swap2_ix(
+    a: &DlmmSwapAccounts,
+    bitmap_extension: Option<Pubkey>,
+    amount_in: u64,
+    min_amount_out: u64,
+) -> Instruction {
+    let prog = dlmm_program();
+    let tok = Pubkey::from_str(TOKEN_PROGRAM).unwrap();
+    let tok22 = Pubkey::from_str(TOKEN_2022_PROGRAM).unwrap();
+    let memo = Pubkey::from_str(MEMO_PROGRAM_ID).unwrap();
+    let x_prog = if a.token_x_2022 { tok22 } else { tok };
+    let y_prog = if a.token_y_2022 { tok22 } else { tok };
+    let ext = bitmap_extension.unwrap_or(prog);
+
+    let mut metas = vec![
+        AccountMeta::new(a.lb_pair, false),
+        AccountMeta::new(ext, false), // bin_array_bitmap_extension (PDA or None)
+        AccountMeta::new(a.reserve_x, false),
+        AccountMeta::new(a.reserve_y, false),
+        AccountMeta::new(a.user_token_in, false),
+        AccountMeta::new(a.user_token_out, false),
+        AccountMeta::new_readonly(a.token_x_mint, false),
+        AccountMeta::new_readonly(a.token_y_mint, false),
+        AccountMeta::new(dlmm_oracle(&a.lb_pair), false),
+        AccountMeta::new_readonly(prog, false), // host_fee_in = None
+        AccountMeta::new_readonly(a.user, true), // user (sole signer; sim: sigVerify off)
+        AccountMeta::new_readonly(x_prog, false),
+        AccountMeta::new_readonly(y_prog, false),
+        AccountMeta::new_readonly(memo, false), // memo_program (swap2-only)
+        AccountMeta::new_readonly(event_authority(&prog), false),
+        AccountMeta::new_readonly(prog, false),
+    ];
+    for ba in &a.bin_arrays {
+        metas.push(AccountMeta::new(*ba, false));
+    }
+
+    let mut data = Vec::with_capacity(28);
+    data.extend_from_slice(&DLMM_SWAP2_DISCRIMINATOR);
+    data.extend_from_slice(&amount_in.to_le_bytes());
+    data.extend_from_slice(&min_amount_out.to_le_bytes());
+    data.extend_from_slice(&[0, 0, 0, 0]); // remaining_accounts_info = empty
+
+    Instruction {
+        program_id: prog,
+        accounts: metas,
+        data,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +381,55 @@ mod tests {
         assert!(ix.accounts[2].is_writable && ix.accounts[3].is_writable);
         assert!(ix.accounts[4].is_writable && ix.accounts[5].is_writable);
         assert!(ix.accounts[8].is_writable);
+    }
+
+    #[test]
+    fn dlmm_swap2_ix_has_slice4_shape() {
+        let p = |s: &str| Pubkey::from_str(s).unwrap_or_default();
+        let a = DlmmSwapAccounts {
+            lb_pair: p("CnK82s8exdsK9nwqQ55kd9wcxoA22NwTchZJCBdu8LDa"),
+            reserve_x: Pubkey::new_unique(),
+            reserve_y: Pubkey::new_unique(),
+            token_x_mint: Pubkey::new_unique(),
+            token_y_mint: Pubkey::new_unique(),
+            token_x_2022: true,
+            token_y_2022: false,
+            user: Pubkey::new_unique(),
+            user_token_in: Pubkey::new_unique(),
+            user_token_out: Pubkey::new_unique(),
+            bin_arrays: vec![
+                Pubkey::new_unique(),
+                Pubkey::new_unique(),
+                Pubkey::new_unique(),
+            ],
+        };
+        // With a bitmap extension present.
+        let ext = Pubkey::new_unique();
+        let ix = build_dlmm_swap2_ix(&a, Some(ext), 100_000_000, 7);
+        assert_eq!(ix.program_id, dlmm_program());
+        // 16 fixed accounts + 3 bin arrays.
+        assert_eq!(ix.accounts.len(), 19);
+        // Data: swap2 disc | amount | min | empty remaining_accounts_info.
+        assert_eq!(ix.data.len(), 28);
+        assert_eq!(&ix.data[0..8], &DLMM_SWAP2_DISCRIMINATOR);
+        assert_eq!(
+            u64::from_le_bytes(ix.data[8..16].try_into().unwrap()),
+            100_000_000
+        );
+        assert_eq!(u64::from_le_bytes(ix.data[16..24].try_into().unwrap()), 7);
+        assert_eq!(&ix.data[24..28], &[0, 0, 0, 0]);
+        // [1] = real bitmap extension when present.
+        assert_eq!(ix.accounts[1].pubkey, ext);
+        // [10] user is the sole signer; [13] is the swap2-only memo program.
+        assert!(ix.accounts[10].is_signer);
+        assert_eq!(ix.accounts.iter().filter(|m| m.is_signer).count(), 1);
+        assert_eq!(
+            ix.accounts[13].pubkey,
+            Pubkey::from_str(MEMO_PROGRAM_ID).unwrap()
+        );
+        // [1] falls back to the program-id None sentinel when absent.
+        let ix2 = build_dlmm_swap2_ix(&a, None, 1, 0);
+        assert_eq!(ix2.accounts[1].pubkey, dlmm_program());
     }
 
     /// SOURCE-LEVEL PROOF: this module contains no submit/sign/keypair path.
