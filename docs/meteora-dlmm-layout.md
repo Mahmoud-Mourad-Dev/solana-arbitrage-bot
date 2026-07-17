@@ -212,5 +212,18 @@ still succeeds — the monotonic order seen in the fixtures is a caller conventi
 not a program requirement. (The slice-4 reconstruction guard still enforces
 monotonicity as a fixture-provenance check; it is not a chain constraint.)
 
-Verdict: `METEORA DIRECT PARITY PROVEN` (Stage-1, Meteora-only). No Pump, no
-atomic composition, no signing/submit — those remain out of scope.
+Verdict: `METEORA DIRECT PARITY PROVEN — ROUTE 1 WSOL→TOKEN DIRECTION`
+(Stage-1, Meteora-only). No Pump, no atomic composition, no signing/submit —
+those remain out of scope.
+
+### Direction scope (accepted)
+
+- **Meteora WSOL→token direct parity is PROVEN.** This is the exact Meteora leg
+  the current arbitrage route requires: `Meteora WSOL→Token → Pump Token→WSOL`.
+  The buy direction is not a strategic deviation — it is the leg under test.
+- **The opposite token→WSOL direction was represented in the CPI fixtures**
+  (the captured swap2 sells) **but was NOT directly simulated.**
+- **No claim is made about direct-simulation parity in the token→WSOL
+  direction**, because that direction is not currently required by the strategy.
+  If a future route needs it, it must get its own direct simulation before any
+  such claim.
