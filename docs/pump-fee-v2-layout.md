@@ -90,3 +90,50 @@ Corrected index classes (verified in `pump_reconstruct.rs`):
 `pump_evidence.rs` and `pump_reconstruct.rs` tests fail if anyone relabels
 [19],[21],[22],[23] as derivable/proven, if the data reconstruction stops
 being byte-exact, or if [22]/[23] are treated as pool-constant.
+
+## Slice-6 — direct SELL simulation parity (S13C)
+
+Binary: `sim-pump-sell` (MODE=simulate only; no sign/send/Jito/keypair). Per
+route it captures a FRESH recent successful direct top-level Pump `sell`,
+reconstructs it byte-exact, clones the coherent rotating set [9,10,22,23] +
+fee-v2 accounts from that same tx, substitutes ONLY [1]/[5]/[6] to a current
+token holder, and simulates (`sigVerify=false`) inside a tight reserve bracket
+(fetch vaults+pool → simulate at `minContextSlot` → re-fetch; a sample counts
+only if the bracket is unchanged, so the sim provably used those reserves).
+
+**What is PROVEN (both routes):**
+
+- Direct top-level Pump `sell` ENTERS and COMPLETES after substitution.
+- Byte-exact reconstruction; 24 accounts; [0]=pool, [3]=mint.
+- The coherent rotating fee set [9,10,22,23] (same source tx) is ACCEPTED.
+- Account substitution is viable: `base(token) delta == amount_in` exactly, and
+  WSOL is credited to the substituted [6].
+- Same-state (clean-bracket) guard holds.
+- Negatives fail for their own reasons: wrong fee-v2 [19] → 3007
+  AccountOwnedByWrongProgram (`fee_config`); mixed rotating [9] → 2015
+  ConstraintTokenOwner (`protocol_fee_recipient_token_account`); wrong base-acct
+  mint → IncorrectProgramId; impossible min_out → 6004 ExceededSlippage
+  (`sell.rs:170`); insufficient balance → token `0x1` insufficient funds.
+
+**What FAILS — the quote fee rate (verdict `PUMP QUOTE MISMATCH`):**
+
+The fee-less CPMM **gross is exact** (input side exact, clean-bracket reserves),
+but the local quote's **fee rate is stale for fee-v2 pools**. Measured real
+total fee (constant across two amounts each, clean brackets):
+
+| route | pool | model fee | REAL fee (measured) | quote gap |
+|---|---|---|---|---|
+| 1 | `5ByL7MZo…` | 30 bps | **75 bps** | ≈45 bps |
+| 3 | `8qDidAKu…` | 30 bps | **95 bps** | ≈65 bps |
+
+`pump_amm::fee_split` hardcodes 30 bps total (`PROTOCOL_FEE_BPS=5` + LP/creator
+= 30), which matched the pre-fee-v2 S9 sample (29/29). These two routes are
+**fee-v2 pools with PER-POOL rates** (75 vs 95 bps) that the quote engine does
+not read — so local WSOL out overestimates the simulated delta by the fee gap
+(route1 ≈45 bps, route3 ≈65 bps). The per-pool rate almost certainly lives in
+the undocumented fee-v2 `fee_config` [19]; decoding it was NOT attempted here
+(out of slice scope, undocumented layout). **A fee-v2 rate model is the required
+follow-up before Pump legs can be trusted for profit math.**
+
+Verdict per route: `PUMP QUOTE MISMATCH` (root cause: fee-v2 per-pool fee rate,
+not a reconstruction/substitution/harness failure).

@@ -74,3 +74,7 @@ path = "src/bin/capture_parity_fixtures.rs"
 [[bin]]
 name = "sim-meteora-route1"
 path = "src/bin/sim_meteora_route1.rs"
+
+[[bin]]
+name = "sim-pump-sell"
+path = "src/bin/sim_pump_sell.rs"
