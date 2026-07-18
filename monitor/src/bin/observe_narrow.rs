@@ -17,14 +17,15 @@
 use anyhow::{Context, Result};
 use arb_common::cost::CostModel;
 use arb_monitor::market_discovery::DiscoveryCache;
-use arb_monitor::narrow_report::{aggregate_narrow, PollEvent};
+use arb_monitor::narrow_report::{aggregate_narrow, FeeV2Provenance, PollEvent, RunManifest};
 use arb_monitor::observe_live::{
-    cluster_time, env_u64, fetch_snapshot, git_commit, gzip, install_shutdown, now_ms, reconfirm,
-    routes_for, secrets_from_env, Ctx,
+    atomic_write, cluster_time, env_u64, fetch_snapshot_retry, git_commit, gzip, install_shutdown,
+    is_transient, now_ms, reconfirm, routes_for, secrets_from_env, startup_route_check, Ctx,
 };
 use arb_monitor::observe_report::competitive_model;
 use arb_monitor::observe_report::default_scenarios;
 use arb_monitor::optimizer::{optimize, size_analysis, SizeGrid};
+use arb_monitor::pump_feev2::{fee_breakdown, FEE_SCHEMA_VERSION};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use std::collections::BTreeMap;
@@ -77,8 +78,20 @@ async fn main() -> Result<()> {
     let raw = std::fs::read_to_string(&cache_path)
         .with_context(|| format!("read narrow route set {cache_path}"))?;
     let cache = DiscoveryCache::from_json(&raw).context("narrow-routes cache version mismatch")?;
-    let token_of: BTreeMap<String, String> = cache
-        .markets
+
+    // ── S13C P1: unsafe routes are refused at startup (or excluded under the
+    // explicit observe-only diagnostic flag) — they can never reach polls,
+    // episodes, controls, or economics.
+    let allow_diag = std::env::var("NARROW_UNSAFE_DIAGNOSTIC")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let (markets, excluded_unsafe) = startup_route_check(&cache.markets, allow_diag)
+        .map_err(|e| anyhow::anyhow!("unsafe-route gate: {e}"))?;
+    for (pool, reason) in &excluded_unsafe {
+        tracing::warn!(route = %pool, reason = %reason, "route EXCLUDED at startup (unsafe)");
+    }
+
+    let token_of: BTreeMap<String, String> = markets
         .iter()
         .map(|m| (m.pump_pool.clone(), m.token_mint.clone()))
         .collect();
@@ -93,9 +106,28 @@ async fn main() -> Result<()> {
     let jsonl_path = format!("{out_dir}/polls-{run_id}.jsonl");
     let report_path = format!("{out_dir}/report-{run_id}.json");
     let mut jsonl = std::fs::File::create(&jsonl_path)?;
+    // ── S13C P7: first JSONL line is a manifest with everything rebuild-report
+    // needs to reproduce the live metrics with no external flags.
+    let manifest = RunManifest {
+        manifest_version: 1,
+        report_version: 2,
+        commit: git_commit(),
+        run_id,
+        started_at_ms: run_id,
+        target_period_ms: interval.as_millis() as u64,
+        frozen_secs,
+        control_tokens: control_tokens.clone(),
+        token_of: token_of.clone(),
+        excluded_unsafe: excluded_unsafe
+            .iter()
+            .map(|(p, r)| format!("{p}: {r}"))
+            .collect(),
+        fee_schema: FEE_SCHEMA_VERSION.to_string(),
+    };
+    writeln!(jsonl, "{}", serde_json::to_string(&manifest)?)?;
     let shutdown = Arc::new(AtomicBool::new(false));
     install_shutdown(shutdown.clone());
-    info!(routes = cache.markets.len(), commit = %git_commit(),
+    info!(routes = markets.len(), excluded_unsafe = excluded_unsafe.len(), commit = %git_commit(),
           target_period_s = interval.as_secs(), "observe-narrow starting — fast poll, NEVER submits");
 
     let cost = competitive_model(); // episodes defined by COMPETITIVE net ≥ 0
@@ -117,36 +149,97 @@ async fn main() -> Result<()> {
     let mut tip_tier_shaped = 0u64;
     let run_start = Instant::now();
     let mut last_checkpoint = Instant::now();
+    let mut last_heartbeat = Instant::now();
+    let heartbeat_secs = env_u64("NARROW_HEARTBEAT_SECS", 120).clamp(60, 300);
     let mut poll_count = 0u64;
     let mut rpc_failures = 0u64;
+    let mut sweep_count = 0u64;
+    let mut last_slot = 0u64;
 
     loop {
         let sweep_start = Instant::now();
         let now_unix = cluster_time(&rpc).await;
-        for m in &cache.markets {
+        for m in &markets {
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
             poll_count += 1;
-            let snap = match fetch_snapshot(&rpc, &ctx, m, now_unix, &secrets).await {
+            let key = route_key(m, "meteora->pump");
+            // Every attempt writes EXACTLY ONE structured event (S13C P2):
+            // a failed snapshot is an explicit failure PollEvent, never a
+            // silent gap. Route-level failures are isolated — the sweep
+            // continues with the next route.
+            let snap = match fetch_snapshot_retry(&rpc, &ctx, m, now_unix, &secrets).await {
                 Ok(s) => s,
-                Err(_) => {
+                Err(reason) => {
                     rpc_failures += 1;
-                    open.remove(&route_key(m, "meteora->pump")); // unavailable ⇒ close
+                    open.remove(&key); // unavailable ⇒ episode terminates
+                    let status = if is_transient(reason) {
+                        "rpc_error"
+                    } else {
+                        "snapshot_invalid"
+                    };
+                    let ev = PollEvent {
+                        route: key.clone(),
+                        at_ms: now_ms(),
+                        slot: 0,
+                        kind: "poll".into(),
+                        profitable_competitive: false,
+                        gross_lamports: 0,
+                        competitive_net_lamports: 0,
+                        size_lamports: 0,
+                        fingerprint: i128::MIN,
+                        snapshot_latency_ms: 0,
+                        reconfirm_delay_ms: None,
+                        episode_start_ms: None,
+                        valid_snapshot: false,
+                        poll_status: status.into(),
+                        reject_reason: Some(reason.to_string()),
+                        rpc_error: is_transient(reason).then(|| reason.to_string()),
+                        fee_v2: None,
+                    };
+                    writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
+                    events.push(ev);
                     continue;
                 }
             };
             let latency = snap.rpc_latency_ms;
             let slot = snap.slot;
+            last_slot = slot;
+            let fee_prov = snap.fee_v2.clone();
             // Only the live direction (pump-first is a creator-BUY, refused).
             let route = match routes_for(snap)
                 .into_iter()
                 .find(|(l, _)| *l == "meteora->pump")
             {
                 Some((_, r)) if r.token_mint(&ctx.wsol).is_some() => r,
-                _ => continue,
+                _ => {
+                    // Quote-rejected attempt: still exactly one explicit event.
+                    open.remove(&key);
+                    let ev = PollEvent {
+                        route: key.clone(),
+                        at_ms: now_ms(),
+                        slot,
+                        kind: "poll".into(),
+                        profitable_competitive: false,
+                        gross_lamports: 0,
+                        competitive_net_lamports: 0,
+                        size_lamports: 0,
+                        fingerprint: i128::MIN,
+                        snapshot_latency_ms: latency,
+                        reconfirm_delay_ms: None,
+                        episode_start_ms: None,
+                        valid_snapshot: true,
+                        poll_status: "quote_rejected".into(),
+                        reject_reason: Some("route_direction_unavailable".into()),
+                        rpc_error: None,
+                        fee_v2: None,
+                    };
+                    writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
+                    events.push(ev);
+                    continue;
+                }
             };
-            let key = route_key(m, "meteora->pump");
             let at_ms = now_ms();
 
             let fingerprint = route
@@ -157,6 +250,9 @@ async fn main() -> Result<()> {
                 Some(c) => (c.net_profit >= 0, c.gross_profit, c.net_profit, c.amount_in),
                 None => (false, 0, 0, 0),
             };
+            // Fee-v2 provenance for THIS event (S13C P5); fee components in
+            // lamports are attributed at the optimized size when one exists.
+            let fee_v2 = Some(attach_fee_lamports(fee_prov, &route, &ctx.wsol, size));
             let ev = PollEvent {
                 route: key.clone(),
                 at_ms,
@@ -170,6 +266,11 @@ async fn main() -> Result<()> {
                 snapshot_latency_ms: latency,
                 reconfirm_delay_ms: None,
                 episode_start_ms: None,
+                valid_snapshot: true,
+                poll_status: "ok".into(),
+                reject_reason: None,
+                rpc_error: None,
+                fee_v2,
             };
             writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
             events.push(ev);
@@ -223,6 +324,9 @@ async fn main() -> Result<()> {
                     start,
                 )
                 .await;
+                if !cf.valid_snapshot {
+                    rpc_failures += 1;
+                }
                 let ev = PollEvent {
                     route: key.clone(),
                     at_ms: now_ms(),
@@ -236,6 +340,16 @@ async fn main() -> Result<()> {
                     snapshot_latency_ms: 0,
                     reconfirm_delay_ms: Some(cf.delay_ms),
                     episode_start_ms: Some(start),
+                    valid_snapshot: cf.valid_snapshot,
+                    poll_status: if cf.valid_snapshot {
+                        "ok".into()
+                    } else {
+                        "rpc_error".into()
+                    },
+                    reject_reason: cf.reject_reason.clone(),
+                    rpc_error: (!cf.valid_snapshot)
+                        .then(|| cf.reject_reason.clone().unwrap_or_default()),
+                    fee_v2: None,
                 };
                 writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
                 events.push(ev);
@@ -245,12 +359,28 @@ async fn main() -> Result<()> {
             }
         }
         jsonl.flush().ok();
+        sweep_count += 1;
 
         let sweep_ms = sweep_start.elapsed().as_millis() as u64;
         sweep_samples.push(sweep_ms);
         // Interval fix: `interval` is the target PERIOD. Sleep the remainder.
         let sleep_ms = (interval.as_millis() as u64).saturating_sub(sweep_ms);
         sleep_samples.push(sleep_ms);
+
+        // Heartbeat (S13C P8): operational liveness every 1–5 minutes.
+        if last_heartbeat.elapsed() >= Duration::from_secs(heartbeat_secs) {
+            let jsonl_bytes = std::fs::metadata(&jsonl_path).map(|m| m.len()).unwrap_or(0);
+            info!(
+                sweeps = sweep_count,
+                polls = poll_count,
+                last_slot,
+                rpc_failures,
+                jsonl_bytes,
+                effective_period_ms = mean(&sweep_samples) + mean(&sleep_samples),
+                "heartbeat"
+            );
+            last_heartbeat = Instant::now();
+        }
 
         if last_checkpoint.elapsed() >= Duration::from_secs(3600) {
             write_report(
@@ -342,6 +472,44 @@ fn route_key(m: &arb_monitor::market_discovery::DiscoveredMarket, dir: &str) -> 
     format!("{}|{}|{}", m.pump_pool, m.dlmm_pair, dir)
 }
 
+/// Attribute the fee-v2 components in lamports at the optimized size (0 when no
+/// profitable size exists). The tier itself came from the SAME snapshot.
+fn attach_fee_lamports(
+    mut prov: FeeV2Provenance,
+    route: &arb_monitor::route_engine::Route,
+    wsol: &solana_sdk::pubkey::Pubkey,
+    size: u64,
+) -> FeeV2Provenance {
+    if size == 0 {
+        return prov;
+    }
+    // Pump leg is leg2 (token → WSOL): its input is leg1's output at `size`.
+    // The fee-less CPMM gross at that input, on the SAME snapshot reserves,
+    // yields the per-component fee attribution.
+    let token_mid = match route.round_trip(wsol, size) {
+        Ok((token_mid, _)) => token_mid,
+        Err(_) => return prov,
+    };
+    let gross = arb_monitor::math::cpmm_amount_out(
+        token_mid,
+        prov.base_reserve,
+        prov.quote_reserve,
+        0,
+        10_000,
+    );
+    let tier = arb_monitor::pump_feev2::FeeTier {
+        market_cap_threshold: 0,
+        lp_bps: prov.lp_bps,
+        protocol_bps: prov.protocol_bps,
+        creator_bps: prov.creator_bps,
+    };
+    let b = fee_breakdown(gross, &tier);
+    prov.lp_fee_lamports = b.lp;
+    prov.protocol_fee_lamports = b.protocol;
+    prov.creator_fee_lamports = b.creator;
+    prov
+}
+
 fn mean(v: &[u64]) -> u64 {
     if v.is_empty() {
         0
@@ -406,6 +574,8 @@ fn write_report(
             "note": "modeled costs; a candidate is a monitor signal, not a fill",
         },
     });
-    std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
+    // Atomic write (S13C P8): a crash mid-checkpoint can never truncate the
+    // previous good report.
+    atomic_write(path, &serde_json::to_string_pretty(&report)?)?;
     Ok(())
 }

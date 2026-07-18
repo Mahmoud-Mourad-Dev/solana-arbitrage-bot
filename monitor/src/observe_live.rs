@@ -126,10 +126,12 @@ impl Ctx {
     }
 }
 
-/// The two venue legs for a market at a single slot, plus measured latency.
+/// The two venue legs for a market at a single slot, plus measured latency and
+/// the fee-v2 provenance resolved from the SAME snapshot.
 pub struct Snapshot {
     pub slot: u64,
     pub rpc_latency_ms: u64,
+    pub fee_v2: crate::narrow_report::FeeV2Provenance,
     pub pump_leg: Leg,
     pub dlmm_leg: Leg,
 }
@@ -220,6 +222,43 @@ pub async fn fetch_snapshot(
     ) else {
         return Err("decode");
     };
+    // ── Account provenance (S13C P4): the cached identities must MATCH the
+    // decoded on-chain pool/pair, and every account must be owned by the
+    // expected program — typed rejects, never a quote on mismatched state.
+    if pool.base_vault != bv || pool.quote_vault != qv {
+        return Err("vault_identity_mismatch");
+    }
+    if pool.base_mint != base_mint_k {
+        return Err("pool_base_mint_mismatch");
+    }
+    if pool.quote_mint != ctx.wsol {
+        return Err("pool_quote_not_wsol");
+    }
+    let token_prog = Pubkey::from_str(crate::sim_parity::TOKEN_PROGRAM).unwrap();
+    let token22_prog = Pubkey::from_str(crate::sim_parity::TOKEN_2022_PROGRAM).unwrap();
+    let is_token_prog = |k: &Pubkey| *k == token_prog || *k == token22_prog;
+    if !is_token_prog(&bv_acc.owner) || !is_token_prog(&qv_acc.owner) {
+        return Err("vault_owner_not_token_program");
+    }
+    // SPL/2022 token-account layout: mint at [0..32].
+    let acct_mint = |a: &Account| -> Option<Pubkey> {
+        (a.data.len() >= 72).then(|| Pubkey::new_from_array(a.data[0..32].try_into().unwrap()))
+    };
+    if acct_mint(bv_acc) != Some(pool.base_mint) || acct_mint(qv_acc) != Some(pool.quote_mint) {
+        return Err("vault_mint_mismatch");
+    }
+    if !is_token_prog(&mint_acc.owner) {
+        return Err("mint_owner_not_token_program");
+    }
+    let fee_prog = Pubkey::from_str(crate::sim_parity::PUMP_FEE_PROGRAM_ID).unwrap();
+    if fee_cfg_acc.owner != fee_prog {
+        return Err("fee_config_owner_mismatch");
+    }
+    // Meteora pair sides must be exactly {token, WSOL}.
+    let pair_mints = [pair.token_x_mint, pair.token_y_mint];
+    if !(pair_mints.contains(&ctx.wsol) && pair_mints.contains(&base_mint_k)) {
+        return Err("pair_mint_mismatch");
+    }
     let (Some(base_reserve), Some(quote_reserve)) = (token_amount(bv_acc), token_amount(qv_acc))
     else {
         return Err("vault_decode");
@@ -231,6 +270,30 @@ pub async fn fetch_snapshot(
     };
     let Some(base_mint_supply) = mint_supply(mint_acc) else {
         return Err("mint_supply_decode");
+    };
+    // Fee-v2 provenance (S13C P5) — every value from THIS snapshot.
+    let Ok(tier) =
+        crate::pump_amm::resolve_fee_v2(base_reserve, quote_reserve, base_mint_supply, &fee_config)
+    else {
+        return Err("fee_tier_unresolved");
+    };
+    let fee_v2 = crate::narrow_report::FeeV2Provenance {
+        market_cap_lamports: tier.market_cap,
+        tier_index: tier.tier_index,
+        lp_bps: tier.lp_bps,
+        protocol_bps: tier.protocol_bps,
+        creator_bps: tier.creator_bps,
+        total_bps: tier.total_bps,
+        lp_fee_lamports: 0, // filled by the caller at the optimized size
+        protocol_fee_lamports: 0,
+        creator_fee_lamports: 0,
+        fee_config_address: PUMP_FEE_CONFIG_ADDR.to_string(),
+        fee_config_owner: fee_cfg_acc.owner.to_string(),
+        fee_config_hash: sha256_hex(&fee_cfg_acc.data),
+        schema_version: crate::pump_feev2::FEE_SCHEMA_VERSION.to_string(),
+        base_mint_supply,
+        base_reserve,
+        quote_reserve,
     };
     let mut arrays: HashMap<i64, BinArray> = HashMap::new();
     for (i, acc) in idxs.iter().zip(&v[6..]) {
@@ -247,6 +310,7 @@ pub async fn fetch_snapshot(
     Ok(Snapshot {
         slot,
         rpc_latency_ms: t0.elapsed().as_millis() as u64,
+        fee_v2,
         pump_leg: Leg::Pump {
             pool,
             base_reserve,
@@ -260,6 +324,123 @@ pub async fn fetch_snapshot(
             now_unix,
         },
     })
+}
+
+/// SHA-256 hex of account data (fee-config provenance hash).
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(data);
+    format!("{:x}", h.finalize())
+}
+
+/// Bounded retry backoff schedule (ms) for snapshot fetches: attempt 0 → no
+/// wait, then 250ms, then 500ms; hard-capped — never unbounded.
+pub fn retry_backoff_ms(attempt: u32) -> u64 {
+    match attempt {
+        0 => 0,
+        1 => 250,
+        _ => 500,
+    }
+}
+
+/// Per-attempt RPC timeout for a snapshot fetch.
+pub const SNAPSHOT_TIMEOUT_SECS: u64 = 10;
+/// Total snapshot attempts (1 initial + bounded retries).
+pub const SNAPSHOT_ATTEMPTS: u32 = 2;
+
+/// `fetch_snapshot` with a per-attempt timeout and bounded retry/backoff
+/// (S13C P8). Distinguishes a timeout ("rpc_timeout") from other rejects.
+pub async fn fetch_snapshot_retry(
+    rpc: &RpcClient,
+    ctx: &Ctx,
+    m: &DiscoveredMarket,
+    now_unix: i64,
+    secrets: &[&str],
+) -> Result<Snapshot, &'static str> {
+    let mut last: &'static str = "rpc_timeout";
+    for attempt in 0..SNAPSHOT_ATTEMPTS {
+        let wait = retry_backoff_ms(attempt);
+        if wait > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+        }
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(SNAPSHOT_TIMEOUT_SECS),
+            fetch_snapshot(rpc, ctx, m, now_unix, secrets),
+        )
+        .await
+        {
+            Ok(Ok(s)) => return Ok(s),
+            // Provenance/decode rejects are deterministic — retrying is
+            // pointless; return immediately.
+            Ok(Err(e)) if !is_transient(e) => return Err(e),
+            Ok(Err(e)) => last = e,
+            Err(_) => last = "rpc_timeout",
+        }
+    }
+    Err(last)
+}
+
+/// Whether a snapshot reject is transport-level (worth one bounded retry).
+pub fn is_transient(reason: &str) -> bool {
+    matches!(reason, "pair_fetch" | "snapshot_fetch" | "rpc_timeout")
+}
+
+/// Atomic file write: temp file in the same directory + rename, so a crash
+/// mid-write can never leave a truncated report/checkpoint (S13C P8).
+pub fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Split a curated market list into (safe, unsafe-with-reason) (S13C P1).
+pub fn partition_safe(
+    markets: &[DiscoveredMarket],
+) -> (Vec<DiscoveredMarket>, Vec<(String, String)>) {
+    let mut safe = Vec::new();
+    let mut unsafe_routes = Vec::new();
+    for m in markets {
+        if m.safe {
+            safe.push(m.clone());
+        } else {
+            unsafe_routes.push((
+                m.pump_pool.clone(),
+                format!("safe=false (mint {} failed screening)", m.token_mint),
+            ));
+        }
+    }
+    (safe, unsafe_routes)
+}
+
+/// Startup gate: with `allow_diagnostic=false` (default), ANY unsafe route in
+/// the curated file refuses startup, listing each offender. With the explicit
+/// observe-only diagnostic flag, unsafe routes are EXCLUDED (never polled,
+/// never in episodes/controls/economics) and the safe remainder runs.
+/// (safe markets, excluded-unsafe `(pool, reason)` pairs).
+pub type SafePartition = (Vec<DiscoveredMarket>, Vec<(String, String)>);
+
+pub fn startup_route_check(
+    markets: &[DiscoveredMarket],
+    allow_diagnostic: bool,
+) -> Result<SafePartition, String> {
+    let (safe, unsafe_routes) = partition_safe(markets);
+    if !unsafe_routes.is_empty() && !allow_diagnostic {
+        let list: Vec<String> = unsafe_routes
+            .iter()
+            .map(|(p, r)| format!("{p}: {r}"))
+            .collect();
+        return Err(format!(
+            "curated file contains {} unsafe route(s) — refusing startup \
+             (set NARROW_UNSAFE_DIAGNOSTIC=true to exclude them and continue): {}",
+            unsafe_routes.len(),
+            list.join("; ")
+        ));
+    }
+    if safe.is_empty() {
+        return Err("no safe routes to poll".into());
+    }
+    Ok((safe, unsafe_routes))
 }
 
 /// Both directions from a snapshot.
@@ -301,14 +482,18 @@ pub async fn reconfirm(
     grid: &SizeGrid,
     detected_at_ms: u64,
 ) -> Confirmation {
-    let snap = match fetch_snapshot(rpc, ctx, m, now_unix, secrets).await {
+    let snap = match fetch_snapshot_retry(rpc, ctx, m, now_unix, secrets).await {
         Ok(s) => s,
-        Err(_) => {
+        Err(reason) => {
+            // FAILED reconfirmation: valid_snapshot=false + typed reason so the
+            // aggregator can NEVER mistake it for a zero-profit survivor.
             return Confirmation {
                 survived: false,
+                valid_snapshot: false,
+                reject_reason: Some(reason.to_string()),
                 delay_ms: now_ms().saturating_sub(detected_at_ms),
                 ..Default::default()
-            }
+            };
         }
     };
     let slot = snap.slot;
@@ -320,6 +505,8 @@ pub async fn reconfirm(
     match optimize(&route, &ctx.wsol, cost, grid) {
         Some(c) if c.net_profit >= 0 => Confirmation {
             survived: true,
+            valid_snapshot: true,
+            reject_reason: None,
             context_slot: slot,
             net_profit_lamports: c.net_profit,
             gross_profit_lamports: c.gross_profit,
@@ -327,9 +514,135 @@ pub async fn reconfirm(
         },
         _ => Confirmation {
             survived: false,
+            valid_snapshot: true,
             context_slot: slot,
             delay_ms: now_ms().saturating_sub(detected_at_ms),
             ..Default::default()
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn market(pool: &str, safe: bool) -> DiscoveredMarket {
+        // Build via serde so we don't depend on field-by-field construction.
+        let mut v = serde_json::json!({
+            "token_mint": format!("TOK{pool}"),
+            "decimals": 6,
+            "token_2022": true,
+            "pump_pool": pool,
+            "pump_base_is_wsol": false,
+            "pump_base_vault": "BV",
+            "pump_quote_vault": "QV",
+            "pump_fee_verified": false,
+            "pump_wsol_reserve": 1u64,
+            "dlmm_pair": "PAIR",
+            "dlmm_x_is_wsol": false,
+            "dlmm_reserve_x": "RX",
+            "dlmm_reserve_y": "RY",
+            "dlmm_bin_step": 80,
+            "dlmm_wsol_reserve": 1u64,
+            "safety": serde_json::to_value(crate::market_discovery::MintSafety::default()).unwrap(),
+            "safe": safe,
+        });
+        // Tolerate extra required fields with defaults if schema grows.
+        if let Some(obj) = v.as_object_mut() {
+            obj.entry("min_wsol_reserve")
+                .or_insert(serde_json::json!(1u64));
+            obj.entry("rank_lamports")
+                .or_insert(serde_json::json!(1u64));
+        }
+        serde_json::from_value(v).expect("test market builds")
+    }
+
+    // ── S13C P1: unsafe routes can never reach polls or economics. ──
+
+    #[test]
+    fn startup_refuses_unsafe_routes_by_default() {
+        let ms = vec![market("SAFE1", true), market("BAD1", false)];
+        let err = startup_route_check(&ms, false).unwrap_err();
+        assert!(err.contains("refusing startup"), "{err}");
+        assert!(err.contains("BAD1"), "must name the offending route: {err}");
+    }
+
+    #[test]
+    fn diagnostic_flag_excludes_unsafe_but_runs_safe_remainder() {
+        let ms = vec![market("SAFE1", true), market("BAD1", false)];
+        let (safe, excluded) = startup_route_check(&ms, true).unwrap();
+        assert_eq!(safe.len(), 1);
+        assert_eq!(safe[0].pump_pool, "SAFE1");
+        assert_eq!(excluded.len(), 1);
+        assert_eq!(excluded[0].0, "BAD1");
+        assert!(excluded[0].1.contains("safe=false"));
+    }
+
+    #[test]
+    fn all_unsafe_refuses_even_with_flag() {
+        let ms = vec![market("BAD1", false)];
+        assert!(startup_route_check(&ms, true).is_err(), "no safe routes");
+    }
+
+    #[test]
+    fn unsafe_route_cannot_affect_economics() {
+        // The partition is the ONLY source of pollable routes: an unsafe route
+        // never yields events, so aggregate_narrow over the safe set cannot
+        // contain it. Prove the partition drops it entirely.
+        let ms = vec![market("SAFE1", true), market("BAD1", false)];
+        let (safe, _) = partition_safe(&ms);
+        assert!(safe.iter().all(|m| m.pump_pool != "BAD1"));
+        // And a poll stream built from the safe set has no BAD1 route key.
+        let keys: Vec<String> = safe
+            .iter()
+            .map(|m| format!("{}|{}|meteora->pump", m.pump_pool, m.dlmm_pair))
+            .collect();
+        assert!(keys.iter().all(|k| !k.contains("BAD1")));
+    }
+
+    // ── S13C P8: bounded backoff, transient classification, atomic writes. ──
+
+    #[test]
+    fn retry_backoff_is_bounded() {
+        assert_eq!(retry_backoff_ms(0), 0);
+        assert_eq!(retry_backoff_ms(1), 250);
+        assert_eq!(retry_backoff_ms(2), 500);
+        assert_eq!(retry_backoff_ms(99), 500, "hard cap — never unbounded");
+    }
+
+    #[test]
+    fn transient_vs_deterministic_rejects() {
+        assert!(is_transient("snapshot_fetch"));
+        assert!(is_transient("pair_fetch"));
+        assert!(is_transient("rpc_timeout"));
+        // Provenance/decode failures are deterministic — no retry.
+        assert!(!is_transient("vault_identity_mismatch"));
+        assert!(!is_transient("fee_config_owner_mismatch"));
+        assert!(!is_transient("fee_config_decode"));
+        assert!(!is_transient("pool_base_mint_mismatch"));
+    }
+
+    #[test]
+    fn atomic_write_replaces_whole_file_and_leaves_no_tmp() {
+        let dir = std::env::temp_dir().join(format!("narrow-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("report.json");
+        let path_s = path.to_str().unwrap();
+        atomic_write(path_s, "{\"v\":1}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"v\":1}");
+        atomic_write(path_s, "{\"v\":2}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"v\":2}");
+        assert!(
+            !std::path::Path::new(&format!("{path_s}.tmp")).exists(),
+            "tmp must be renamed away"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn sha256_hex_is_deterministic() {
+        assert_eq!(sha256_hex(b""), sha256_hex(b""));
+        assert_ne!(sha256_hex(b"a"), sha256_hex(b"b"));
+        assert_eq!(sha256_hex(b"abc").len(), 64);
     }
 }

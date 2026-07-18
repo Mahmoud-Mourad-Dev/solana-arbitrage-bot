@@ -213,8 +213,93 @@ pub fn optimize(
         }
     }
 
+    // Stage 3 (S13C P9): explicit boundary probes. The net-profit function is
+    // NOT guaranteed unimodal — the Jito-tip schedule steps at gross
+    // thresholds, and DLMM capacity caps the top. Ternary refinement alone can
+    // park in a local optimum, so we always also probe:
+    //   * the configured min and max sizes;
+    //   * the largest feasible size (DLMM capacity boundary);
+    //   * the size just below each Jito tip-tier gross threshold.
+    for a in boundary_candidates(route, wsol, grid) {
+        if let Probe::Feasible { score } = probe(route, wsol, cost, a) {
+            if score > best_score {
+                best_score = score;
+                best_amount = a;
+            }
+        }
+    }
+
     // Only return a real, profitable, gated Candidate.
     route.evaluate(wsol, best_amount, cost).ok()
+}
+
+/// Boundary sizes worth an explicit probe (S13C P9): grid.min, grid.max, the
+/// DLMM capacity ceiling, and — for each Jito tip-tier gross threshold — the
+/// largest size whose gross stays BELOW the threshold (where the tip% step
+/// makes net locally discontinuous), plus its neighbour just above.
+pub fn boundary_candidates(route: &Route, wsol: &Pubkey, grid: &SizeGrid) -> Vec<u64> {
+    let gross_at = |a: u64| -> Option<i128> {
+        route
+            .round_trip(wsol, a)
+            .ok()
+            .map(|(_, out)| out as i128 - a as i128)
+    };
+    let mut out = vec![grid.min, grid.max];
+    // DLMM capacity ceiling: largest feasible size (binary shrink from max).
+    if gross_at(grid.max).is_none() && gross_at(grid.min).is_some() {
+        let (mut good, mut bad) = (grid.min, grid.max);
+        for _ in 0..40 {
+            if bad - good <= 1 {
+                break;
+            }
+            let mid = good + (bad - good) / 2;
+            if gross_at(mid).is_some() {
+                good = mid;
+            } else {
+                bad = mid;
+            }
+        }
+        out.push(good);
+    }
+    // Tip-tier boundaries. gross(size) is NOT monotone (it rises with size,
+    // peaks, then falls as slippage dominates), so a single global bisection is
+    // wrong. Instead: evaluate gross on the coarse log grid and, wherever the
+    // predicate `gross >= threshold` FLIPS between adjacent grid points (in
+    // either direction), bisect that sub-interval to locate the step and probe
+    // both sides of it.
+    let pts = log_grid(grid.min, grid.max, grid.coarse_points.max(24));
+    let gross_pts: Vec<(u64, Option<i128>)> = pts.iter().map(|&a| (a, gross_at(a))).collect();
+    for &thr in &TIP_TIER_THRESHOLDS {
+        let at_or_above = |g: Option<i128>| g.map(|g| g >= thr as i128);
+        for w in gross_pts.windows(2) {
+            let (a0, g0) = w[0];
+            let (a1, g1) = w[1];
+            let (Some(p0), Some(p1)) = (at_or_above(g0), at_or_above(g1)) else {
+                continue;
+            };
+            if p0 == p1 {
+                continue;
+            }
+            // Bisect [a0, a1] for the flip point of `gross >= thr`.
+            let (mut lo, mut hi) = (a0, a1);
+            for _ in 0..48 {
+                if hi - lo <= 1 {
+                    break;
+                }
+                let mid = lo + (hi - lo) / 2;
+                match gross_at(mid).map(|g| g >= thr as i128) {
+                    Some(p) if p == p0 => lo = mid,
+                    Some(_) => hi = mid,
+                    None => break, // infeasible pocket — keep the bracket ends
+                }
+            }
+            out.push(lo);
+            out.push(hi);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 // ─────────────────────── size analysis (optimizer correction) ──────────────
@@ -454,6 +539,79 @@ mod tests {
         let leg2 = pump_leg(token, wsol(), 100_000_000_000_000, 100_000_000_000_000);
         let route = Route { leg1, leg2 };
         assert!(optimize(&route, &wsol(), &cost(), &grid()).is_none());
+    }
+
+    // ── S13C P9: the optimizer must never be beaten by an explicit probe at a
+    // known discontinuity (tip tiers, capacity ceiling, min/max sizes). ──
+
+    #[test]
+    fn optimizer_result_dominates_all_boundary_probes() {
+        // A profitable imbalanced route under the STEPPED Jito-tip schedule —
+        // net(gross) is discontinuous at the tier thresholds, so ternary alone
+        // is not trusted; the optimizer must match or beat every explicit
+        // boundary candidate and a dense sweep.
+        let token = Pubkey::new_unique();
+        // leg1 WSOL→token rich, leg2 token→WSOL richer ⇒ real edge.
+        let leg1 = pump_leg(wsol(), token, 1_000_000_000_000, 900_000_000_000_000);
+        let leg2 = pump_leg(token, wsol(), 880_000_000_000_000, 1_010_000_000_000);
+        let route = Route { leg1, leg2 };
+        let c = cost();
+        let g = grid();
+        let best = optimize(&route, &wsol(), &c, &g).expect("route has an edge");
+
+        let net_at = |a: u64| -> i128 {
+            match route.round_trip(&wsol(), a) {
+                Ok((_, out)) if out > a => c.net(out - a),
+                Ok((_, out)) => out as i128 - a as i128,
+                Err(_) => i128::MIN,
+            }
+        };
+        // Explicit boundary candidates (incl. tip-tier steps + min/max).
+        for a in boundary_candidates(&route, &wsol(), &g) {
+            assert!(
+                best.net_profit >= net_at(a),
+                "boundary probe {} nets {} > optimizer {}",
+                a,
+                net_at(a),
+                best.net_profit
+            );
+        }
+        // Dense sweep as an independent check (coarse but unbiased).
+        let mut a = g.min;
+        while a <= g.max {
+            assert!(
+                best.net_profit >= net_at(a),
+                "sweep probe {} nets {} > optimizer {}",
+                a,
+                net_at(a),
+                best.net_profit
+            );
+            a = a.saturating_mul(21) / 20; // ~5% steps
+        }
+    }
+
+    #[test]
+    fn boundary_candidates_include_min_max_and_tier_steps() {
+        let token = Pubkey::new_unique();
+        let leg1 = pump_leg(wsol(), token, 1_000_000_000_000, 900_000_000_000_000);
+        let leg2 = pump_leg(token, wsol(), 880_000_000_000_000, 1_010_000_000_000);
+        let route = Route { leg1, leg2 };
+        let g = grid();
+        let cands = boundary_candidates(&route, &wsol(), &g);
+        assert!(cands.contains(&g.min));
+        assert!(cands.contains(&g.max));
+        // This route's gross crosses at least the first tip threshold, so a
+        // pair of sizes bracketing the step must be present (more than just
+        // min/max).
+        assert!(
+            cands.len() > 2,
+            "expected tip-tier bracketing candidates, got {cands:?}"
+        );
+        // Candidates are sorted and unique.
+        let mut sorted = cands.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(cands, sorted);
     }
 
     #[test]

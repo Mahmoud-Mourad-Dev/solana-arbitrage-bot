@@ -124,6 +124,13 @@ pub struct Confirmation {
     pub gross_profit_lamports: u64,
     #[serde(alias = "latency_ms")]
     pub delay_ms: u64,
+    /// Whether the reconfirmation snapshot executed successfully. A failed
+    /// reconfirm (false) must NEVER read as a zero-profit survivor (S13C P3).
+    #[serde(default)]
+    pub valid_snapshot: bool,
+    /// Typed reason when the reconfirmation could not execute.
+    #[serde(default)]
+    pub reject_reason: Option<String>,
 }
 
 /// A full candidate observation (v2 field names carry units; v1 aliases
@@ -531,6 +538,8 @@ mod tests {
                 net_profit_lamports: cost.net(gross),
                 gross_profit_lamports: gross,
                 delay_ms: 120,
+                valid_snapshot: true,
+                reject_reason: None,
             }),
             confirm2: c2.then(|| Confirmation {
                 survived: true,
@@ -538,6 +547,8 @@ mod tests {
                 net_profit_lamports: cost.net(gross),
                 gross_profit_lamports: gross,
                 delay_ms: 240,
+                valid_snapshot: true,
+                reject_reason: None,
             }),
         }
     }

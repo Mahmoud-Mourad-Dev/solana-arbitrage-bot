@@ -11,7 +11,7 @@
 //!        [--controls tok1,tok2] [--frozen-secs 600] [--routes narrow-routes.json]
 
 use anyhow::{Context, Result};
-use arb_monitor::narrow_report::{aggregate_narrow, PollEvent};
+use arb_monitor::narrow_report::{aggregate_narrow, parse_narrow_jsonl};
 use arb_monitor::observe_live::{git_commit, gzip};
 use arb_monitor::observe_report::{
     aggregate, default_scenarios, sensitivity, wide_verdict, CandidateRecord,
@@ -95,61 +95,67 @@ fn main() -> Result<()> {
 }
 
 /// Rebuild the corrected NARROW report from a poll+reconfirm JSONL, using the
-/// exact same aggregator as the live tool.
+/// exact same aggregator as the live tool. The run manifest (first JSONL line,
+/// S13C P7) supplies routes/controls/frozen-secs so NO external flags are
+/// needed; flags remain as overrides for pre-manifest files only.
 fn rebuild_narrow(body: &str, jsonl_path: &str, out_path: &str, args: &[String]) -> Result<()> {
-    let controls: Vec<String> = arg_val(args, "--controls")
-        .unwrap_or_default()
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let (manifest, events, ok, bad) = parse_narrow_jsonl(body);
+
+    // Manifest first; CLI flags override / backfill for legacy files.
+    let mut controls: Vec<String> = manifest
+        .as_ref()
+        .map(|m| m.control_tokens.clone())
+        .unwrap_or_default();
+    if let Some(cli) = arg_val(args, "--controls") {
+        controls = cli
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
     let frozen_secs: u64 = arg_val(args, "--frozen-secs")
         .and_then(|v| v.parse().ok())
+        .or(manifest.as_ref().map(|m| m.frozen_secs))
         .unwrap_or(600);
-    // token_of map from an optional routes cache (pump_pool → token).
-    let token_of: BTreeMap<String, String> = arg_val(args, "--routes")
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| {
+    let mut token_of: BTreeMap<String, String> = manifest
+        .as_ref()
+        .map(|m| m.token_of.clone())
+        .unwrap_or_default();
+    if let Some(p) = arg_val(args, "--routes") {
+        if let Some(map) = std::fs::read_to_string(p).ok().and_then(|s| {
             arb_monitor::market_discovery::DiscoveryCache::from_json(&s).map(|c| {
                 c.markets
                     .iter()
                     .map(|m| (m.pump_pool.clone(), m.token_mint.clone()))
-                    .collect()
+                    .collect::<BTreeMap<_, _>>()
             })
-        })
-        .unwrap_or_default();
-
-    let mut events: Vec<PollEvent> = Vec::new();
-    let (mut ok, mut bad) = (0u64, 0u64);
-    for line in body.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<PollEvent>(line) {
-            Ok(e) => {
-                events.push(e);
-                ok += 1;
-            }
-            Err(_) => bad += 1, // tolerate a truncated last line
+        }) {
+            token_of = map;
         }
     }
+
+    let rpc_failure_events = events.iter().filter(|e| !e.valid_snapshot).count();
     let m = aggregate_narrow(&events, &token_of, &controls, frozen_secs);
     let report = serde_json::json!({
         "run": {
             "commit": git_commit(), "source_jsonl": jsonl_path,
             "events_parsed": ok, "events_skipped_malformed": bad,
             "reconstructed_offline": true, "format": "narrow",
+            "manifest": manifest,
+            "manifest_used": manifest.is_some(),
+            "rpc_failure_events": rpc_failure_events,
             "cost_basis": "modeled competitive — no tx built or simulated",
             "note": "Rebuilt via the same aggregate_narrow used live; headline is CAUSAL. \
-                     Pass --routes narrow-routes.json to resolve token mints, --controls to \
-                     exclude frozen controls.",
+                     Config comes from the in-file run manifest; --routes/--controls are \
+                     only needed for legacy pre-manifest JSONL.",
         },
         "metrics": m,
     });
     std::fs::write(out_path, serde_json::to_string_pretty(&report)?)?;
     gzip(out_path);
     println!(
-        "rebuilt NARROW {ok} events ({bad} skipped) → {out_path}(.gz)\nepisodes={} active_routes={} causal_detect/day={} hindsight_UB/day={}",
+        "rebuilt NARROW {ok} events ({bad} skipped, manifest={}) → {out_path}(.gz)\nepisodes={} active_routes={} causal_detect/day={} hindsight_UB/day={}",
+        manifest.is_some(),
         m.episodes_total, m.independently_active_routes,
         m.causal_at_detection_per_day_lamports, m.hindsight_upper_bound_per_day_lamports
     );

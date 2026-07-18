@@ -17,11 +17,21 @@
 
 /// Anchor discriminator of the fee-program global config account ([19]).
 pub const FEE_CONFIG_DISCRIMINATOR: [u8; 8] = [0x8f, 0x34, 0x92, 0xbb, 0xdb, 0x7b, 0x4c, 0x9b];
+/// Supported schema identifier, recorded as provenance with every quote.
+pub const FEE_SCHEMA_VERSION: &str = "pump-feev2-mcap24-v1";
+/// EXACT layout constraints for the supported schema (S13C P6 hardening —
+/// no "first plausible run" scanning; anything else fails closed):
+/// account length, table offset, tier count, stride.
+pub const FEE_CONFIG_LEN: usize = 4073;
+pub const TIER_TABLE_OFFSET: usize = 109;
+pub const TIER_COUNT: usize = 24;
 const TIER_STRIDE: usize = 40;
-const MIN_TIERS: usize = 16;
-/// The lp/protocol bps observed constant across every tier (structural guard).
+/// The lp/protocol bps constants of the supported schema.
 const EXPECTED_LP_BPS: u64 = 20;
 const EXPECTED_PROTOCOL_BPS: u64 = 5;
+/// Sanity bound on the creator component (bps). The observed schedule tops out
+/// at 95; anything above this bound is an unsupported schema, not a fee.
+const MAX_CREATOR_BPS: u64 = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeeTier {
@@ -62,11 +72,12 @@ fn u64_at(d: &[u8], off: usize) -> u64 {
     u64::from_le_bytes(d[off..off + 8].try_into().unwrap())
 }
 
-/// Decode the fee-v2 config: validate the discriminator, then locate the FIRST
-/// contiguous run of ≥16 stride-40 tier entries whose lp/protocol bps are the
-/// expected constants, market-cap thresholds strictly ascending and creator bps
-/// non-increasing (the market-cap creator schedule). Structural, not a magic
-/// offset — a layout change fails loudly rather than returning a wrong fee.
+/// Decode the fee-v2 config under the EXACT supported schema
+/// (`pump-feev2-mcap24-v1`): exact discriminator, exact 4073-byte length, the
+/// 24-tier table at fixed offset 109 (stride 40), lp/protocol constants,
+/// strictly-ascending thresholds, non-increasing bounded creator bps. This does
+/// NOT hunt for a "plausible" table (S13C P6) — any deviation is a typed
+/// failure, never a guessed fee and never a legacy fallback.
 pub fn decode_fee_config(data: &[u8]) -> Result<FeeConfig, FeeV2Error> {
     if data.len() < 8 {
         return Err(FeeV2Error::Malformed {
@@ -76,43 +87,61 @@ pub fn decode_fee_config(data: &[u8]) -> Result<FeeConfig, FeeV2Error> {
     if data[0..8] != FEE_CONFIG_DISCRIMINATOR {
         return Err(FeeV2Error::UnsupportedVersion);
     }
-    // Find the first byte offset that begins a valid ascending run. Entries are
-    // NOT 8-aligned (the first table starts mid-struct), so scan every byte.
-    let last = data.len().saturating_sub(TIER_STRIDE);
-    for off in 8..=last {
-        if u64_at(data, off + 16) != EXPECTED_LP_BPS
-            || u64_at(data, off + 24) != EXPECTED_PROTOCOL_BPS
-        {
-            continue;
-        }
-        let mut tiers = Vec::new();
-        let mut cur = off;
-        let mut prev_thr: Option<u64> = None;
-        let mut prev_creator: Option<u64> = None;
-        while cur + TIER_STRIDE <= data.len()
-            && u64_at(data, cur + 16) == EXPECTED_LP_BPS
-            && u64_at(data, cur + 24) == EXPECTED_PROTOCOL_BPS
-        {
-            let thr = u64_at(data, cur);
-            let creator = u64_at(data, cur + 32);
-            if prev_thr.is_some_and(|p| thr <= p) || prev_creator.is_some_and(|pc| creator > pc) {
-                break;
-            }
-            tiers.push(FeeTier {
-                market_cap_threshold: thr,
-                lp_bps: EXPECTED_LP_BPS,
-                protocol_bps: EXPECTED_PROTOCOL_BPS,
-                creator_bps: creator,
-            });
-            prev_thr = Some(thr);
-            prev_creator = Some(creator);
-            cur += TIER_STRIDE;
-        }
-        if tiers.len() >= MIN_TIERS {
-            return Ok(FeeConfig { tiers });
-        }
+    if data.len() != FEE_CONFIG_LEN {
+        return Err(FeeV2Error::Malformed {
+            reason: "unexpected account length for supported schema",
+        });
     }
-    Err(FeeV2Error::NoTiers)
+    const _: () = assert!(TIER_TABLE_OFFSET + TIER_COUNT * TIER_STRIDE <= FEE_CONFIG_LEN);
+    let mut tiers = Vec::with_capacity(TIER_COUNT);
+    let mut prev_thr: Option<u64> = None;
+    let mut prev_creator: Option<u64> = None;
+    for k in 0..TIER_COUNT {
+        let off = TIER_TABLE_OFFSET + k * TIER_STRIDE;
+        let thr = u64_at(data, off);
+        let lp = u64_at(data, off + 16);
+        let protocol = u64_at(data, off + 24);
+        let creator = u64_at(data, off + 32);
+        if lp != EXPECTED_LP_BPS {
+            return Err(FeeV2Error::Malformed {
+                reason: "tier lp bps outside supported schema",
+            });
+        }
+        if protocol != EXPECTED_PROTOCOL_BPS {
+            return Err(FeeV2Error::Malformed {
+                reason: "tier protocol bps outside supported schema",
+            });
+        }
+        if creator > MAX_CREATOR_BPS {
+            return Err(FeeV2Error::Malformed {
+                reason: "tier creator bps out of bounds",
+            });
+        }
+        if k == 0 && thr == 0 {
+            return Err(FeeV2Error::Malformed {
+                reason: "first threshold is zero",
+            });
+        }
+        if prev_thr.is_some_and(|p| thr <= p) {
+            return Err(FeeV2Error::Malformed {
+                reason: "thresholds not strictly ascending",
+            });
+        }
+        if prev_creator.is_some_and(|pc| creator > pc) {
+            return Err(FeeV2Error::Malformed {
+                reason: "creator bps not non-increasing",
+            });
+        }
+        tiers.push(FeeTier {
+            market_cap_threshold: thr,
+            lp_bps: lp,
+            protocol_bps: protocol,
+            creator_bps: creator,
+        });
+        prev_thr = Some(thr);
+        prev_creator = Some(creator);
+    }
+    Ok(FeeConfig { tiers })
 }
 
 /// Market cap (lamports) as the fee program keys the tier: the base mint's
@@ -277,6 +306,80 @@ mod tests {
     fn zero_reserve_is_typed_error() {
         assert_eq!(market_cap(1, 0, 1), Err(FeeV2Error::ZeroReserveOrSupply));
         assert_eq!(market_cap(0, 1, 1), Err(FeeV2Error::ZeroReserveOrSupply));
+    }
+
+    // ── S13C P6 hardening tests: any deviation from the exact supported
+    // schema fails closed (typed error), never a guessed fee. ──
+
+    #[test]
+    fn truncated_or_padded_account_is_rejected() {
+        // Truncation (valid disc, wrong length).
+        let mut short = FEE_CONFIG.to_vec();
+        short.truncate(2_000);
+        assert!(matches!(
+            decode_fee_config(&short),
+            Err(FeeV2Error::Malformed {
+                reason: "unexpected account length for supported schema"
+            })
+        ));
+        // Trailing padding also changes the length ⇒ rejected (no ambiguity).
+        let mut long = FEE_CONFIG.to_vec();
+        long.extend_from_slice(&[0u8; 40]);
+        assert!(matches!(
+            decode_fee_config(&long),
+            Err(FeeV2Error::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn tampered_lp_or_protocol_bps_is_rejected() {
+        // lp of tier 3 → 21.
+        let mut bad = FEE_CONFIG.to_vec();
+        let off = TIER_TABLE_OFFSET + 3 * 40 + 16;
+        bad[off] = 21;
+        assert!(matches!(
+            decode_fee_config(&bad),
+            Err(FeeV2Error::Malformed {
+                reason: "tier lp bps outside supported schema"
+            })
+        ));
+        // protocol of tier 7 → 6.
+        let mut bad2 = FEE_CONFIG.to_vec();
+        let off2 = TIER_TABLE_OFFSET + 7 * 40 + 24;
+        bad2[off2] = 6;
+        assert!(matches!(
+            decode_fee_config(&bad2),
+            Err(FeeV2Error::Malformed {
+                reason: "tier protocol bps outside supported schema"
+            })
+        ));
+    }
+
+    #[test]
+    fn broken_threshold_ordering_is_rejected() {
+        // Zero-out tier 5's threshold → not strictly ascending.
+        let mut bad = FEE_CONFIG.to_vec();
+        let off = TIER_TABLE_OFFSET + 5 * 40;
+        bad[off..off + 8].copy_from_slice(&0u64.to_le_bytes());
+        assert!(matches!(
+            decode_fee_config(&bad),
+            Err(FeeV2Error::Malformed {
+                reason: "thresholds not strictly ascending"
+            })
+        ));
+    }
+
+    #[test]
+    fn out_of_bounds_creator_bps_is_rejected() {
+        let mut bad = FEE_CONFIG.to_vec();
+        let off = TIER_TABLE_OFFSET + 32; // tier 0 creator
+        bad[off..off + 8].copy_from_slice(&10_000u64.to_le_bytes());
+        assert!(matches!(
+            decode_fee_config(&bad),
+            Err(FeeV2Error::Malformed {
+                reason: "tier creator bps out of bounds"
+            })
+        ));
     }
 
     #[test]

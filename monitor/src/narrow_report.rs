@@ -42,16 +42,120 @@ pub struct PollEvent {
     /// For kind="reconfirm": the episode it belongs to.
     #[serde(default)]
     pub episode_start_ms: Option<u64>,
+
+    // ── v2 correctness fields (S13C repair). Serde defaults keep pre-repair
+    // JSONL parseable: old records are assumed valid+ok.
+    /// False when the snapshot behind this event failed (RPC error, provenance
+    /// reject, decode failure). Such an event can NEVER extend an episode,
+    /// count as a survival, or contribute economic value.
+    #[serde(default = "default_true")]
+    pub valid_snapshot: bool,
+    /// "ok" | "rpc_error" | "snapshot_invalid" | "quote_rejected".
+    #[serde(default = "status_ok")]
+    pub poll_status: String,
+    /// Typed reject reason when poll_status != "ok".
+    #[serde(default)]
+    pub reject_reason: Option<String>,
+    /// RPC-layer error detail when the failure was transport-level.
+    #[serde(default)]
+    pub rpc_error: Option<String>,
+    /// Dynamic Pump fee-v2 provenance for the quote in this event (ok polls).
+    #[serde(default)]
+    pub fee_v2: Option<FeeV2Provenance>,
 }
 
 fn poll_kind() -> String {
     "poll".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+fn status_ok() -> String {
+    "ok".to_string()
 }
 
 impl PollEvent {
     pub fn is_reconfirm(&self) -> bool {
         self.kind == "reconfirm"
     }
+    /// Did this event's snapshot + quote execute successfully?
+    pub fn is_ok(&self) -> bool {
+        self.valid_snapshot && self.poll_status == "ok"
+    }
+}
+
+/// Fee-v2 provenance recorded with every successful Pump quote event — enough
+/// for the offline report to prove which tier applied to each observation. All
+/// values originate from the SAME single-slot quote snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeeV2Provenance {
+    pub market_cap_lamports: u128,
+    pub tier_index: usize,
+    pub lp_bps: u64,
+    pub protocol_bps: u64,
+    pub creator_bps: u64,
+    pub total_bps: u64,
+    /// Fee components (lamports) at the optimized size; zeros when no
+    /// profitable size was found (no candidate to attribute fees to).
+    pub lp_fee_lamports: u64,
+    pub protocol_fee_lamports: u64,
+    pub creator_fee_lamports: u64,
+    pub fee_config_address: String,
+    pub fee_config_owner: String,
+    /// SHA-256 hex of the fee-config account data at the snapshot.
+    pub fee_config_hash: String,
+    pub schema_version: String,
+    pub base_mint_supply: u64,
+    pub base_reserve: u64,
+    pub quote_reserve: u64,
+}
+
+/// First line of a narrow poll JSONL: everything `rebuild-report` needs to
+/// reproduce the live metrics without external flags.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunManifest {
+    /// Manifest schema version.
+    pub manifest_version: u32,
+    pub report_version: u32,
+    pub commit: String,
+    pub run_id: u64,
+    pub started_at_ms: u64,
+    pub target_period_ms: u64,
+    pub frozen_secs: u64,
+    pub control_tokens: Vec<String>,
+    /// pump_pool → token mint for every polled route.
+    pub token_of: BTreeMap<String, String>,
+    /// Routes excluded at startup because safe != true (with reason).
+    pub excluded_unsafe: Vec<String>,
+    pub fee_schema: String,
+}
+
+/// Parse a narrow JSONL body: optional manifest first, then events. Malformed
+/// lines (e.g. a truncated tail after a crash) are counted, not fatal.
+pub fn parse_narrow_jsonl(body: &str) -> (Option<RunManifest>, Vec<PollEvent>, u64, u64) {
+    let mut manifest = None;
+    let mut events = Vec::new();
+    let (mut ok, mut bad) = (0u64, 0u64);
+    for line in body.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if manifest.is_none() && line.contains("\"manifest_version\"") {
+            if let Ok(m) = serde_json::from_str::<RunManifest>(line) {
+                manifest = Some(m);
+                continue;
+            }
+        }
+        match serde_json::from_str::<PollEvent>(line) {
+            Ok(e) => {
+                events.push(e);
+                ok += 1;
+            }
+            Err(_) => bad += 1,
+        }
+    }
+    (manifest, events, ok, bad)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -247,14 +351,16 @@ pub fn aggregate_narrow(
             let mut distinct: Vec<u64> = cur.iter().map(|e| e.gross_lamports).collect();
             distinct.sort_unstable();
             distinct.dedup();
-            // Reconfirm milestones for this episode.
+            // Reconfirm milestones for this episode. A reconfirmation counts
+            // ONLY when it executed successfully (`is_ok`): a failed reconfirm
+            // is None — never a zero-profit "survivor" (S13C repair, P3).
             let key = (cur[0].route.clone(), start);
             let milestone = |lo: u64, hi: u64| -> Option<i128> {
                 rc.get(&key).and_then(|v| {
                     v.iter()
                         .filter(|e| {
                             let d = e.reconfirm_delay_ms.unwrap_or(0);
-                            d >= lo && d < hi
+                            e.is_ok() && d >= lo && d < hi
                         })
                         .map(|e| e.competitive_net_lamports)
                         .next()
@@ -281,7 +387,10 @@ pub fn aggregate_narrow(
             cur.clear();
         };
         for e in &ps {
-            if e.profitable_competitive {
+            // Only a SUCCESSFUL profitable poll extends an episode. Any failed
+            // attempt (RPC error / invalid snapshot) terminates the current
+            // episode — `positive → failure → positive` is TWO episodes (P2).
+            if e.profitable_competitive && e.is_ok() {
                 active_polls += 1;
                 cur.push(e);
             } else {
@@ -346,7 +455,9 @@ pub fn aggregate_narrow(
     let causal_p30 = sum_if(&|e| e.net_plus30s_lamports);
     let hindsight = sum_if(&|e| Some(e.hindsight_max_net_lamports));
 
-    // Survival counts (episodes with a surviving reconfirm in each window).
+    // Survival counts. A milestone survives only when the reconfirm executed
+    // successfully (None = failed/absent — see `milestone`) AND its net is
+    // STRICTLY positive; a failed reconfirmation can never read as survival.
     let survived = |lo: u64, hi: u64| -> usize {
         episodes
             .iter()
@@ -356,7 +467,7 @@ pub fn aggregate_narrow(
                     (6_000, 20_000) => e.net_plus10s_lamports,
                     _ => e.net_plus30s_lamports,
                 };
-                m.map(|n| n >= 0).unwrap_or(false)
+                m.map(|n| n > 0).unwrap_or(false)
             })
             .count()
     };
@@ -429,6 +540,26 @@ mod tests {
             snapshot_latency_ms: 40,
             reconfirm_delay_ms: None,
             episode_start_ms: None,
+            valid_snapshot: true,
+            poll_status: "ok".into(),
+            reject_reason: None,
+            rpc_error: None,
+            fee_v2: None,
+        }
+    }
+    /// A failed poll attempt (RPC error / invalid snapshot).
+    fn failed_poll(route: &str, at: u64, status: &str, reason: &str) -> PollEvent {
+        PollEvent {
+            profitable_competitive: false,
+            gross_lamports: 0,
+            competitive_net_lamports: 0,
+            size_lamports: 0,
+            fingerprint: i128::MIN,
+            valid_snapshot: false,
+            poll_status: status.into(),
+            reject_reason: Some(reason.into()),
+            rpc_error: (status == "rpc_error").then(|| reason.to_string()),
+            ..poll(route, at, false, 0, 0)
         }
     }
     fn recon(route: &str, start: u64, delay: u64, net: i128) -> PollEvent {
@@ -445,6 +576,24 @@ mod tests {
             snapshot_latency_ms: 40,
             reconfirm_delay_ms: Some(delay),
             episode_start_ms: Some(start),
+            valid_snapshot: true,
+            poll_status: "ok".into(),
+            reject_reason: None,
+            rpc_error: None,
+            fee_v2: None,
+        }
+    }
+    /// A FAILED reconfirmation attempt (snapshot could not be taken).
+    fn failed_recon(route: &str, start: u64, delay: u64) -> PollEvent {
+        PollEvent {
+            profitable_competitive: false,
+            competitive_net_lamports: 0,
+            gross_lamports: 0,
+            valid_snapshot: false,
+            poll_status: "rpc_error".into(),
+            reject_reason: Some("snapshot_fetch".into()),
+            rpc_error: Some("snapshot_fetch".into()),
+            ..recon(route, start, delay, 0)
         }
     }
 
@@ -528,5 +677,152 @@ mod tests {
         // control contributes 0 causal value.
         let ctrl = m.routes_detail.iter().find(|r| r.is_control).unwrap();
         assert_eq!(ctrl.causal_detection_lamports, 0);
+    }
+
+    // ── S13C correctness-repair regression tests (Codex findings). ──
+
+    #[test]
+    fn rpc_gap_splits_episode_into_two() {
+        // positive → RPC failure → positive MUST reconstruct as TWO episodes.
+        let ra = "PA|DA|meteora->pump";
+        let events = vec![
+            poll(ra, 0, true, 100, 10),
+            failed_poll(ra, 4_000, "rpc_error", "snapshot_fetch"),
+            poll(ra, 8_000, true, 90, 11),
+            poll(ra, 12_000, false, -5, 12),
+        ];
+        let m = aggregate_narrow(&events, &tokmap(), &[], 600);
+        assert_eq!(m.episodes_total, 2, "gap must terminate the first episode");
+        assert_eq!(m.episodes_detail[0].polls, 1);
+        assert_eq!(m.episodes_detail[1].polls, 1);
+        // Both detections count causally (they are separate detections).
+        assert_eq!(
+            m.episodes_detail[0].net_at_detection_lamports
+                + m.episodes_detail[1].net_at_detection_lamports,
+            190
+        );
+    }
+
+    #[test]
+    fn failed_reconfirm_is_not_survival_at_any_milestone() {
+        // Old bug: a failed reconfirm produced net=0 which counted as `>= 0`
+        // survival. Now a failed reconfirm is None at every milestone.
+        let ra = "PA|DA|meteora->pump";
+        let events = vec![
+            poll(ra, 0, true, 500, 10),
+            poll(ra, 40_000, false, -5, 11),
+            failed_recon(ra, 0, 2_000),
+            failed_recon(ra, 0, 10_000),
+            failed_recon(ra, 0, 30_000),
+        ];
+        let m = aggregate_narrow(&events, &tokmap(), &[], 600);
+        assert_eq!(m.episodes_total, 1);
+        let e = &m.episodes_detail[0];
+        assert_eq!(
+            e.net_plus2s_lamports, None,
+            "+2s failed ⇒ None, not Some(0)"
+        );
+        assert_eq!(e.net_plus10s_lamports, None);
+        assert_eq!(e.net_plus30s_lamports, None);
+        assert_eq!(m.survived_plus2s, 0);
+        assert_eq!(m.survived_plus10s, 0);
+        assert_eq!(m.survived_plus30s, 0);
+        // And they contribute zero to the causal milestone economics.
+        assert_eq!(m.causal_plus10s_per_day_lamports, 0);
+    }
+
+    #[test]
+    fn zero_net_successful_reconfirm_is_not_survival() {
+        // Survival requires STRICTLY positive net, even from a successful
+        // reconfirmation.
+        let ra = "PA|DA|meteora->pump";
+        let events = vec![
+            poll(ra, 0, true, 500, 10),
+            poll(ra, 40_000, false, -5, 11),
+            recon(ra, 0, 10_000, 0), // executed fine, net exactly 0
+        ];
+        let m = aggregate_narrow(&events, &tokmap(), &[], 600);
+        assert_eq!(m.episodes_detail[0].net_plus10s_lamports, Some(0));
+        assert_eq!(m.survived_plus10s, 0, "net=0 is not strict survival");
+    }
+
+    #[test]
+    fn invalid_profitable_poll_cannot_open_or_extend_episode() {
+        // A pathological event claiming profitable=true but valid_snapshot=false
+        // must not create an episode or contribute value.
+        let ra = "PA|DA|meteora->pump";
+        let mut bad = poll(ra, 0, true, 1_000_000, 10);
+        bad.valid_snapshot = false;
+        bad.poll_status = "snapshot_invalid".into();
+        let events = vec![bad, poll(ra, 4_000, false, -5, 11)];
+        let m = aggregate_narrow(&events, &tokmap(), &[], 600);
+        assert_eq!(m.episodes_total, 0);
+        assert_eq!(m.causal_at_detection_per_day_lamports, 0);
+    }
+
+    #[test]
+    fn offline_jsonl_roundtrip_reproduces_live_metrics_exactly() {
+        // Deterministic live-vs-offline equivalence: serialize manifest+events
+        // to JSONL, re-parse via parse_narrow_jsonl, aggregate both ways, and
+        // require identical serialized metrics.
+        let ra = "PA|DA|meteora->pump";
+        let events = vec![
+            poll(ra, 0, true, 500, 10),
+            failed_poll(ra, 4_000, "rpc_error", "snapshot_fetch"),
+            poll(ra, 8_000, true, 400, 11),
+            poll(ra, 12_000, false, -5, 12),
+            recon(ra, 8_000, 2_000, 350),
+            failed_recon(ra, 8_000, 10_000),
+        ];
+        let manifest = RunManifest {
+            manifest_version: 1,
+            report_version: 2,
+            commit: "deadbeef".into(),
+            run_id: 42,
+            started_at_ms: 0,
+            target_period_ms: 3_000,
+            frozen_secs: 600,
+            control_tokens: vec!["CTRL".into()],
+            token_of: tokmap(),
+            excluded_unsafe: vec![],
+            fee_schema: "pump-feev2-mcap24-v1".into(),
+        };
+        let mut body = serde_json::to_string(&manifest).unwrap() + "\n";
+        for e in &events {
+            body.push_str(&serde_json::to_string(e).unwrap());
+            body.push('\n');
+        }
+        let (pm, pe, ok, bad) = parse_narrow_jsonl(&body);
+        let pm = pm.expect("manifest parsed");
+        assert_eq!(pm, manifest);
+        assert_eq!((ok, bad), (events.len() as u64, 0));
+        let live = aggregate_narrow(
+            &events,
+            &manifest.token_of,
+            &manifest.control_tokens,
+            manifest.frozen_secs,
+        );
+        let offline = aggregate_narrow(&pe, &pm.token_of, &pm.control_tokens, pm.frozen_secs);
+        assert_eq!(
+            serde_json::to_value(&live).unwrap(),
+            serde_json::to_value(&offline).unwrap(),
+            "live and offline aggregation must be identical"
+        );
+        // And the correctness semantics hold through the roundtrip.
+        assert_eq!(offline.episodes_total, 2);
+        assert_eq!(offline.survived_plus2s, 1);
+        assert_eq!(offline.survived_plus10s, 0, "failed +10s reconfirm");
+    }
+
+    #[test]
+    fn legacy_jsonl_without_v2_fields_still_parses_as_ok() {
+        // Pre-repair JSONL lines have none of the v2 fields; they must default
+        // to valid+ok so old files remain readable.
+        let line = r#"{"route":"PA|DA|meteora->pump","at_ms":5,"slot":9,"kind":"poll","profitable_competitive":true,"gross_lamports":10,"competitive_net_lamports":7,"size_lamports":100,"fingerprint":1,"snapshot_latency_ms":2,"reconfirm_delay_ms":null,"episode_start_ms":null}"#;
+        let e: PollEvent = serde_json::from_str(line).unwrap();
+        assert!(e.is_ok());
+        assert!(e.valid_snapshot);
+        assert_eq!(e.poll_status, "ok");
+        assert_eq!(e.fee_v2, None);
     }
 }
