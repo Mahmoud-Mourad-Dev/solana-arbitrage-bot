@@ -14,38 +14,6 @@
  },
  "markets": [
   {
-   "token_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-   "decimals": 6,
-   "token_2022": false,
-   "pump_pool": "Gf7sXMoP8iRw4iiXmJ1nq4vxcRycbGXy5RL8a8LnTd3v",
-   "pump_base_is_wsol": false,
-   "pump_base_vault": "nML7msD1MiJHxFvhv4po1u6C4KpWr64ugKqc75DMuD2",
-   "pump_quote_vault": "EjHirXt2bQd2DDNveagHHCWYzUwtY1iwNbBrV5j84e6j",
-   "pump_fee_verified": true,
-   "pump_wsol_reserve": 16511332940670,
-   "dlmm_pair": "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6",
-   "dlmm_x_is_wsol": true,
-   "dlmm_reserve_x": "EYj9xKw6ZszwpyNibHY7JD5o3QgTVrSdcBp1fMJhrR9o",
-   "dlmm_reserve_y": "CoaxzEh8p5YyGLcj36Eo3cUThVJxeKCs7qvLAGDYwBcz",
-   "dlmm_bin_step": 4,
-   "dlmm_wsol_reserve": 35646272653886,
-   "safety": {
-    "token_2022": false,
-    "decimals": 6,
-    "mint_authority": true,
-    "freeze_authority": true,
-    "transfer_fee_bps": 0,
-    "transfer_hook": false,
-    "permanent_delegate": false,
-    "non_transferable": false,
-    "default_account_frozen": false,
-    "pausable": false,
-    "unknown_extension": null
-   },
-   "safe": false,
-   "rank_lamports": 16511332940670
-  },
-  {
    "token_mint": "9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump",
    "decimals": 6,
    "token_2022": true,
@@ -366,5 +334,5 @@
    "rank_lamports": 552963748132
   }
  ],
- "note": "S13C slice 6D fee-correct curated narrow set: top dual-venue markets by arb capacity + the two fee-v2-parity-proven routes. Fees evaluated dynamically at run time (fee-v2)."
+ "note": "S13C slice 6D fee-correct curated narrow set: top dual-venue markets by arb capacity + the two fee-v2-parity-proven routes. Fees evaluated dynamically at run time (fee-v2). Slice-repair: unsafe routes removed (safe=true only)."
 }

@@ -37,10 +37,14 @@ fn main() -> Result<()> {
         .cloned()
         .unwrap_or_else(|| format!("{jsonl_path}.report.json"));
 
-    // Peek the first non-empty line to detect narrow vs wide.
+    // Detect narrow vs wide: a narrow file starts with the run manifest
+    // (post-repair) or contains narrow poll events; peek the first few lines.
     let peek = std::fs::read_to_string(jsonl_path).with_context(|| format!("open {jsonl_path}"))?;
-    let first = peek.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-    let is_narrow = first.contains("\"profitable_competitive\"");
+    let is_narrow = peek
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(3)
+        .any(|l| l.contains("\"manifest_version\"") || l.contains("\"profitable_competitive\""));
     if is_narrow {
         return rebuild_narrow(&peek, jsonl_path, &out_path, &args);
     }
