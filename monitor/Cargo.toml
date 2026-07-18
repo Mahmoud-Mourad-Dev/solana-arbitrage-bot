@@ -82,3 +82,7 @@ path = "src/bin/sim_pump_sell.rs"
 [[bin]]
 name = "reprice-pump-fees"
 path = "src/bin/reprice_pump_fees.rs"
+
+[[bin]]
+name = "whirlpool-parity-capture"
+path = "src/bin/whirlpool_parity_capture.rs"

@@ -39,3 +39,5 @@ pub mod sim_client;
 pub mod sim_parity;
 pub mod tick_math;
 pub mod types;
+pub mod whirlpool_fixture_tests;
+pub mod whirlpool_parity;

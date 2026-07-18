@@ -230,6 +230,94 @@ fn apply_liquidity_net(liq: u128, net: i128, a_to_b: bool) -> u128 {
     }
 }
 
+/// Detailed result of an exact-input swap (S14B-1): output plus the ending
+/// state needed for fixture comparison. Same math as [`swap_exact_in`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SwapDetail {
+    pub amount_out: u64,
+    /// Total swap fee charged on the input (includes the protocol share).
+    pub total_fee: u128,
+    pub end_sqrt_price: u128,
+    /// Initialized tick boundaries actually crossed.
+    pub ticks_crossed: usize,
+}
+
+/// [`swap_exact_in`] with ending-state detail. `None` = REJECTED (beyond
+/// loaded coverage / exhausted liquidity) — never estimated.
+pub fn swap_exact_in_detailed(
+    sqrt_price_current: u128,
+    liquidity: u128,
+    fee_ppm: u128,
+    a_to_b: bool,
+    amount_in: u64,
+    crossings: &[Crossing],
+    coverage_limit_sqrt: u128,
+) -> Option<SwapDetail> {
+    if amount_in == 0 || sqrt_price_current == 0 || fee_ppm >= PPM {
+        return None;
+    }
+    let mut remaining = amount_in as u128;
+    let mut out: u128 = 0;
+    let mut fee_total: u128 = 0;
+    let mut sqrt = sqrt_price_current;
+    let mut liq = liquidity;
+    let mut crossed = 0usize;
+
+    for c in crossings {
+        if a_to_b && c.sqrt_price >= sqrt {
+            continue;
+        }
+        if !a_to_b && c.sqrt_price <= sqrt {
+            continue;
+        }
+        let step = compute_swap_step(remaining, fee_ppm, liq, sqrt, c.sqrt_price, a_to_b);
+        remaining = remaining.saturating_sub(step.amount_in + step.fee);
+        out += step.amount_out;
+        fee_total += step.fee;
+        sqrt = step.next_sqrt;
+        if remaining == 0 || sqrt != c.sqrt_price {
+            return Some(SwapDetail {
+                amount_out: u64::try_from(out).ok()?,
+                total_fee: fee_total,
+                end_sqrt_price: sqrt,
+                ticks_crossed: crossed,
+            });
+        }
+        liq = apply_liquidity_net(liq, c.liquidity_net, a_to_b);
+        crossed += 1;
+    }
+
+    if remaining == 0 {
+        return Some(SwapDetail {
+            amount_out: u64::try_from(out).ok()?,
+            total_fee: fee_total,
+            end_sqrt_price: sqrt,
+            ticks_crossed: crossed,
+        });
+    }
+    let past_limit = if a_to_b {
+        coverage_limit_sqrt >= sqrt
+    } else {
+        coverage_limit_sqrt <= sqrt
+    };
+    if past_limit || liq == 0 {
+        return None;
+    }
+    let step = compute_swap_step(remaining, fee_ppm, liq, sqrt, coverage_limit_sqrt, a_to_b);
+    remaining = remaining.saturating_sub(step.amount_in + step.fee);
+    out += step.amount_out;
+    fee_total += step.fee;
+    if remaining > 0 {
+        return None;
+    }
+    Some(SwapDetail {
+        amount_out: u64::try_from(out).ok()?,
+        total_fee: fee_total,
+        end_sqrt_price: step.next_sqrt,
+        ticks_crossed: crossed,
+    })
+}
+
 /// Result of an exact-input swap: `None` means REJECTED (would step beyond
 /// loaded tick coverage, or liquidity is exhausted) — never overestimate.
 pub fn swap_exact_in(

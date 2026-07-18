@@ -67,8 +67,12 @@ pub fn decode_raydium_v4(d: &[u8]) -> Option<RaydiumV4Decoded> {
 /// Orca Whirlpool (Anchor account, 653 bytes, 8-byte discriminator).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhirlpoolDecoded {
+    pub whirlpools_config: Pubkey,
     pub tick_spacing: u16,
     pub fee_rate_ppm: u64,
+    /// Protocol share of the swap fee (basis points of the fee, /10_000). Does
+    /// NOT change the trader's output — recorded for provenance only.
+    pub protocol_fee_rate: u16,
     pub liquidity: u128,
     pub sqrt_price_x64: u128,
     pub tick_current_index: i32,
@@ -83,8 +87,10 @@ pub fn decode_whirlpool(d: &[u8]) -> Option<WhirlpoolDecoded> {
         return None;
     }
     Some(WhirlpoolDecoded {
+        whirlpools_config: pk(d, 8),
         tick_spacing: u16::from_le_bytes(d[41..43].try_into().unwrap()),
         fee_rate_ppm: u16::from_le_bytes(d[45..47].try_into().unwrap()) as u64,
+        protocol_fee_rate: u16::from_le_bytes(d[47..49].try_into().unwrap()),
         liquidity: u128_le(d, 49),
         sqrt_price_x64: u128_le(d, 65),
         tick_current_index: i32::from_le_bytes(d[81..85].try_into().unwrap()),
