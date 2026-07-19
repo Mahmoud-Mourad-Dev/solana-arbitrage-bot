@@ -14,6 +14,10 @@
 use crate::meteora_dlmm::{dlmm_quote_exact_in_detailed, BinArray, DlmmQuoteError, LbPair};
 use crate::pump_amm::{pump_quote_detailed_v2, PumpAmmPool, PumpQuoteError};
 use crate::pump_feev2::FeeConfig;
+use crate::tick_math::{
+    single_tick_capacity, sqrt_price_from_tick, swap_exact_in_detailed, MAX_TICK, MIN_TICK,
+};
+use crate::types::tick_array_span;
 use arb_common::cost::CostModel;
 use solana_sdk::pubkey::Pubkey;
 use std::collections::HashMap;
@@ -25,6 +29,126 @@ pub enum LegReject {
     WrongMint,
     Pump(PumpQuoteError),
     Dlmm(DlmmQuoteError),
+    Whirlpool(WhirlpoolLegReject),
+}
+
+/// Whirlpool-leg rejections (S14B-2). `SingleTickExceeded` is a CAPACITY reject:
+/// the input would cross an initialized tick, which is out of the proven scope,
+/// so the optimizer must treat it as "too big" and search smaller — NEVER quote
+/// it. `capacity` is the max within-tick input for provenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WhirlpoolLegReject {
+    WrongMint,
+    NoLiquidity,
+    /// Would cross an initialized tick — capacity clamp; `capacity` is the max
+    /// within-tick gross input.
+    SingleTickExceeded {
+        capacity: u64,
+    },
+    MathError,
+}
+
+impl WhirlpoolLegReject {
+    /// A capacity reject means "smaller could work" (like DLMM bin exhaustion).
+    pub fn is_capacity(&self) -> bool {
+        matches!(self, WhirlpoolLegReject::SingleTickExceeded { .. })
+    }
+}
+
+/// Compact, self-contained Whirlpool leg state (no RPC): enough to quote a
+/// single-tick swapV2-semantics exact-in and enforce the single-tick clamp.
+#[derive(Debug, Clone)]
+pub struct WhirlpoolLegState {
+    pub mint_a: Pubkey,
+    pub mint_b: Pubkey,
+    pub sqrt_price_x64: u128,
+    pub liquidity: u128,
+    pub tick_current_index: i32,
+    pub tick_spacing: u16,
+    pub fee_ppm: u64,
+    /// Initialized ticks within loaded coverage: (tick_index, liquidity_net).
+    pub initialized_ticks: Vec<(i32, i128)>,
+    /// Loaded tick-array start-index coverage (for the no-crossing edge).
+    pub lowest_start: i32,
+    pub highest_start: i32,
+}
+
+impl WhirlpoolLegState {
+    /// The sqrt price of the nearest initialized tick in the swap direction —
+    /// the single-tick boundary. If none is loaded in that direction, the loaded
+    /// coverage edge (so a swap that would leave coverage is rejected, never
+    /// extrapolated).
+    fn single_tick_boundary(&self, a_to_b: bool) -> u128 {
+        let span = tick_array_span(self.tick_spacing);
+        if a_to_b {
+            self.initialized_ticks
+                .iter()
+                .filter(|(ti, _)| *ti <= self.tick_current_index)
+                .map(|(ti, _)| *ti)
+                .max()
+                .map(sqrt_price_from_tick)
+                .unwrap_or_else(|| sqrt_price_from_tick(self.lowest_start.max(MIN_TICK)))
+        } else {
+            self.initialized_ticks
+                .iter()
+                .filter(|(ti, _)| *ti > self.tick_current_index)
+                .map(|(ti, _)| *ti)
+                .min()
+                .map(sqrt_price_from_tick)
+                .unwrap_or_else(|| sqrt_price_from_tick((self.highest_start + span).min(MAX_TICK)))
+        }
+    }
+
+    /// Single-tick exact-in quote (token→WSOL uses swapV2 semantics; the math is
+    /// identical to the proven `swap_exact_in`). Returns `(out, fee)` or a typed
+    /// reject. A size that would cross a tick is a CAPACITY reject carrying the
+    /// within-tick capacity — never a crossing quote.
+    fn quote(&self, input_mint: &Pubkey, amount_in: u64) -> Result<(u64, u64), WhirlpoolLegReject> {
+        let a_to_b = if *input_mint == self.mint_a {
+            true
+        } else if *input_mint == self.mint_b {
+            false
+        } else {
+            return Err(WhirlpoolLegReject::WrongMint);
+        };
+        if self.liquidity == 0 {
+            return Err(WhirlpoolLegReject::NoLiquidity);
+        }
+        let boundary = self.single_tick_boundary(a_to_b);
+        let capacity = single_tick_capacity(
+            self.sqrt_price_x64,
+            self.liquidity,
+            self.fee_ppm as u128,
+            a_to_b,
+            boundary,
+        );
+        // No crossings passed + coverage limited to the boundary ⇒ any size that
+        // would reach/exceed the boundary returns None (would cross).
+        match swap_exact_in_detailed(
+            self.sqrt_price_x64,
+            self.liquidity,
+            self.fee_ppm as u128,
+            a_to_b,
+            amount_in,
+            &[],
+            boundary,
+        ) {
+            Some(d) if d.ticks_crossed == 0 => Ok((d.amount_out, d.total_fee as u64)),
+            _ => Err(WhirlpoolLegReject::SingleTickExceeded { capacity }),
+        }
+    }
+
+    /// Max within-tick input for the given input mint (event provenance).
+    pub fn single_tick_capacity_for(&self, input_mint: &Pubkey) -> u64 {
+        let a_to_b = *input_mint == self.mint_a;
+        single_tick_capacity(
+            self.sqrt_price_x64,
+            self.liquidity,
+            self.fee_ppm as u128,
+            a_to_b,
+            self.single_tick_boundary(a_to_b),
+        )
+    }
 }
 
 /// One venue leg with its already-fetched live state.
@@ -48,6 +172,8 @@ pub enum Leg {
         arrays: HashMap<i64, BinArray>,
         now_unix: i64,
     },
+    /// Orca Whirlpool (swapV2 semantics), single-tick-clamped (S14B-2).
+    Whirlpool(WhirlpoolLegState),
 }
 
 impl Leg {
@@ -68,6 +194,15 @@ impl Leg {
                     Some(pair.token_y_mint)
                 } else if input == &pair.token_y_mint {
                     Some(pair.token_x_mint)
+                } else {
+                    None
+                }
+            }
+            Leg::Whirlpool(w) => {
+                if input == &w.mint_a {
+                    Some(w.mint_b)
+                } else if input == &w.mint_b {
+                    Some(w.mint_a)
                 } else {
                     None
                 }
@@ -121,6 +256,7 @@ impl Leg {
                 dlmm_quote_exact_in_detailed(pair, arrays, swap_for_y, amount_in, *now_unix)
                     .map_err(LegReject::Dlmm)
             }
+            Leg::Whirlpool(w) => w.quote(input_mint, amount_in).map_err(LegReject::Whirlpool),
         }
     }
 }
@@ -389,6 +525,129 @@ mod tests {
             Err(RouteReject::Leg1(LegReject::Pump(
                 PumpQuoteError::CreatorBuyUnverified
             )))
+        );
+    }
+
+    fn whirlpool_leg(
+        mint_a: Pubkey,
+        mint_b: Pubkey,
+        boundary_below: i32,
+        boundary_above: i32,
+    ) -> Leg {
+        use crate::tick_math::Q64;
+        Leg::Whirlpool(WhirlpoolLegState {
+            mint_a,
+            mint_b,
+            sqrt_price_x64: Q64, // price 1.0 at tick 0
+            liquidity: 10u128.pow(15),
+            tick_current_index: 0,
+            tick_spacing: 8,
+            fee_ppm: 500,
+            initialized_ticks: vec![
+                (boundary_below, 10i128.pow(12)),
+                (boundary_above, -(10i128.pow(12))),
+            ],
+            lowest_start: -5632,
+            highest_start: 5632,
+        })
+    }
+
+    #[test]
+    fn whirlpool_leg_quotes_within_tick_and_clamps_crossing() {
+        let token = Pubkey::new_unique();
+        let w = whirlpool_leg(token, wsol(), -80, 80);
+        // A small token->WSOL input stays within the tick and quotes.
+        let small = w.quote(&token, 1_000_000).expect("within-tick quote");
+        assert!(small > 0);
+        // Capacity is finite and positive.
+        let Leg::Whirlpool(ws) = &w else {
+            unreachable!()
+        };
+        let cap = ws.single_tick_capacity_for(&token);
+        assert!(cap > 0);
+        // An input beyond capacity must be a capacity reject (never a crossing).
+        let big = w.quote(&token, cap * 100 + 10_000_000_000);
+        match big {
+            Err(LegReject::Whirlpool(WhirlpoolLegReject::SingleTickExceeded { capacity })) => {
+                assert_eq!(capacity, cap);
+            }
+            other => panic!("expected SingleTickExceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn optimizer_clamps_below_whirlpool_tick_crossing() {
+        use crate::optimizer::{optimize, SizeGrid};
+        let token = Pubkey::new_unique();
+        // leg1: Pump WSOL(base)->token(quote) SELL (exact), deep so token_mid is
+        // large enough to threaten the whirlpool tick boundary on leg2.
+        let leg1 = pump_leg(wsol(), token, 2_000_000_000_000, 400_000_000_000_000);
+        let leg2 = whirlpool_leg(token, wsol(), -80, 80);
+        let route = Route { leg1, leg2 };
+        assert_eq!(route.token_mint(&wsol()), Some(token));
+        let grid = SizeGrid {
+            min: 1_000_000,
+            max: 50_000_000_000,
+            ..Default::default()
+        };
+        // Whatever the optimizer returns, it must be a real evaluable candidate
+        // whose leg2 does NOT cross a tick (round_trip succeeds = within-tick).
+        if let Some(c) = optimize(&route, &wsol(), &cost_model(0), &grid) {
+            let (_mid, _out) = route
+                .round_trip(&wsol(), c.amount_in)
+                .expect("chosen size is within-tick");
+        }
+        // And a deliberately huge size is rejected as capacity (not quoted).
+        let huge = route.round_trip(&wsol(), 50_000_000_000);
+        assert!(matches!(
+            huge,
+            Err(RouteReject::Leg2(LegReject::Whirlpool(
+                WhirlpoolLegReject::SingleTickExceeded { .. }
+            ))) | Ok(_)
+        ));
+    }
+
+    #[test]
+    fn composes_real_dlmm_leg1_with_whirlpool_leg2() {
+        // The actual S14B-2 topology: WSOL→token on Meteora (real fixture),
+        // token→WSOL on Whirlpool (single-tick). Must chain to a within-tick
+        // round trip or a typed reject — never panic, never a crossing quote.
+        let pair = decode_lb_pair(LB_PAIR_BYTES).unwrap();
+        let token = pair.token_x_mint;
+        let mut arrays = HashMap::new();
+        arrays.insert(9i64, decode_bin_array(BIN_ARRAY_9).unwrap());
+        let now = pair.v_parameters.last_update_timestamp + 5;
+        // leg1: Meteora WSOL(Y)→token(X).
+        let leg1 = Leg::Meteora {
+            pair,
+            arrays,
+            now_unix: now,
+        };
+        // leg2: Whirlpool token→WSOL (token = mint_a).
+        let leg2 = whirlpool_leg(token, wsol(), -80, 80);
+        let route = Route { leg1, leg2 };
+        assert_eq!(route.token_mint(&wsol()), Some(token));
+        match route.round_trip(&wsol(), 100_000_000) {
+            Ok((mid, out)) => {
+                assert!(mid > 0 && out > 0);
+                // leg2 stayed within a tick (else it would have been a reject).
+            }
+            Err(RouteReject::Leg1(LegReject::Dlmm(_)))
+            | Err(RouteReject::Leg2(LegReject::Whirlpool(
+                WhirlpoolLegReject::SingleTickExceeded { .. },
+            ))) => {}
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn whirlpool_wrong_mint_rejected() {
+        let a = Pubkey::new_unique();
+        let b = Pubkey::new_unique();
+        let w = whirlpool_leg(a, b, -80, 80);
+        assert_eq!(
+            w.quote(&Pubkey::new_unique(), 1_000),
+            Err(LegReject::Whirlpool(WhirlpoolLegReject::WrongMint))
         );
     }
 

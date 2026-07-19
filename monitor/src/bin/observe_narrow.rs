@@ -197,6 +197,7 @@ async fn main() -> Result<()> {
                         reject_reason: Some(reason.to_string()),
                         rpc_error: is_transient(reason).then(|| reason.to_string()),
                         fee_v2: None,
+                        xdex: None,
                     };
                     writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
                     events.push(ev);
@@ -234,6 +235,7 @@ async fn main() -> Result<()> {
                         reject_reason: Some("route_direction_unavailable".into()),
                         rpc_error: None,
                         fee_v2: None,
+                        xdex: None,
                     };
                     writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
                     events.push(ev);
@@ -271,6 +273,7 @@ async fn main() -> Result<()> {
                 reject_reason: None,
                 rpc_error: None,
                 fee_v2,
+                xdex: None,
             };
             writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
             events.push(ev);
@@ -350,6 +353,7 @@ async fn main() -> Result<()> {
                     rpc_error: (!cf.valid_snapshot)
                         .then(|| cf.reject_reason.clone().unwrap_or_default()),
                     fee_v2: None,
+                    xdex: None,
                 };
                 writeln!(jsonl, "{}", serde_json::to_string(&ev)?)?;
                 events.push(ev);

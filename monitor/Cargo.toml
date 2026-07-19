@@ -86,3 +86,7 @@ path = "src/bin/reprice_pump_fees.rs"
 [[bin]]
 name = "whirlpool-parity-capture"
 path = "src/bin/whirlpool_parity_capture.rs"
+
+[[bin]]
+name = "observe-xdex"
+path = "src/bin/observe_xdex.rs"

@@ -62,6 +62,9 @@ pub struct PollEvent {
     /// Dynamic Pump fee-v2 provenance for the quote in this event (ok polls).
     #[serde(default)]
     pub fee_v2: Option<FeeV2Provenance>,
+    /// Meteora↔Whirlpool cross-DEX route provenance (S14B-2 xdex polls).
+    #[serde(default)]
+    pub xdex: Option<XdexProvenance>,
 }
 
 fn poll_kind() -> String {
@@ -108,6 +111,30 @@ pub struct FeeV2Provenance {
     pub base_mint_supply: u64,
     pub base_reserve: u64,
     pub quote_reserve: u64,
+}
+
+/// Cross-DEX (Meteora DLMM → Orca Whirlpool swapV2) route provenance recorded
+/// with every successful xdex poll (S14B-2). All from the same route snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct XdexProvenance {
+    pub meteora_pair: String,
+    pub whirlpool_pool: String,
+    /// e.g. "WSOL->USDC->WSOL".
+    pub direction: String,
+    pub amount_in: u64,
+    pub token_mid: u64,
+    pub wsol_out: u64,
+    pub meteora_fee: u64,
+    pub whirlpool_fee: u64,
+    pub whirlpool_tick_current: i32,
+    /// Max within-tick input the Whirlpool leg accepts (single-tick clamp).
+    pub whirlpool_single_tick_capacity: u64,
+    /// Proven: the chosen size did NOT cross a Whirlpool tick.
+    pub no_tick_crossed: bool,
+    pub meteora_slot: u64,
+    pub whirlpool_slot: u64,
+    pub meteora_pair_hash: String,
+    pub whirlpool_pool_hash: String,
 }
 
 /// First line of a narrow poll JSONL: everything `rebuild-report` needs to
@@ -545,6 +572,7 @@ mod tests {
             reject_reason: None,
             rpc_error: None,
             fee_v2: None,
+            xdex: None,
         }
     }
     /// A failed poll attempt (RPC error / invalid snapshot).
@@ -581,6 +609,7 @@ mod tests {
             reject_reason: None,
             rpc_error: None,
             fee_v2: None,
+            xdex: None,
         }
     }
     /// A FAILED reconfirmation attempt (snapshot could not be taken).
@@ -812,6 +841,52 @@ mod tests {
         assert_eq!(offline.episodes_total, 2);
         assert_eq!(offline.survived_plus2s, 1);
         assert_eq!(offline.survived_plus10s, 0, "failed +10s reconfirm");
+    }
+
+    #[test]
+    fn xdex_provenance_survives_jsonl_roundtrip_and_aggregates_equally() {
+        // An xdex poll with full provenance must serialize, re-parse, and
+        // aggregate identically (offline == live) — proving rebuild-report
+        // equivalence for the cross-DEX pipeline.
+        let ra = "MET|WHP|WSOL->USDC->WSOL";
+        let mut p = poll(ra, 0, true, 1234, 10);
+        p.xdex = Some(XdexProvenance {
+            meteora_pair: "MET".into(),
+            whirlpool_pool: "WHP".into(),
+            direction: "WSOL->USDC->WSOL".into(),
+            amount_in: 1_000_000_000,
+            token_mid: 149_000_000,
+            wsol_out: 1_001_234_000,
+            meteora_fee: 300_000,
+            whirlpool_fee: 74_500,
+            whirlpool_tick_current: -25773,
+            whirlpool_single_tick_capacity: 7_257_438_556,
+            no_tick_crossed: true,
+            meteora_slot: 100,
+            whirlpool_slot: 101,
+            meteora_pair_hash: "abc".into(),
+            whirlpool_pool_hash: "def".into(),
+        });
+        let events = vec![p, poll(ra, 4_000, false, -5, 11)];
+        let tok: BTreeMap<String, String> = [("MET".to_string(), "USDC".to_string())].into();
+        let body: String = events
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (_m, pe, ok, bad) = parse_narrow_jsonl(&body);
+        assert_eq!((ok, bad), (2, 0));
+        assert_eq!(
+            pe[0].xdex, events[0].xdex,
+            "xdex provenance survives roundtrip"
+        );
+        let live = aggregate_narrow(&events, &tok, &[], 600);
+        let off = aggregate_narrow(&pe, &tok, &[], 600);
+        assert_eq!(
+            serde_json::to_value(&live).unwrap(),
+            serde_json::to_value(&off).unwrap()
+        );
+        assert_eq!(live.episodes_total, 1);
     }
 
     #[test]

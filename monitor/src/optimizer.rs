@@ -71,6 +71,14 @@ fn probe(route: &Route, wsol: &Pubkey, cost: &CostModel, amount: u64) -> Probe {
         {
             Probe::TooBig
         }
+        // Whirlpool single-tick clamp (S14B-2): crossing a tick is out of proven
+        // scope ⇒ "too big", search smaller — never a crossing quote.
+        Err(RouteReject::Leg1(LegReject::Whirlpool(e)))
+        | Err(RouteReject::Leg2(LegReject::Whirlpool(e)))
+            if e.is_capacity() =>
+        {
+            Probe::TooBig
+        }
         // Any other leg/topology error is structural — dead at all sizes.
         Err(_) => Probe::Dead,
     }

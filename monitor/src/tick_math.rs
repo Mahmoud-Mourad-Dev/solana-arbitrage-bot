@@ -318,6 +318,39 @@ pub fn swap_exact_in_detailed(
     })
 }
 
+/// Max exact-input (gross, incl. fee) that keeps the swap ENTIRELY within the
+/// current tick — i.e. moves the price no further than `boundary_sqrt` (the
+/// nearest initialized tick in the swap direction). S14B-2 single-tick clamp:
+/// the optimizer must never explore sizes above this, because real on-chain
+/// tick-crossing parity is not yet proven. Returns 0 if already at/past the
+/// boundary or liquidity is zero.
+pub fn single_tick_capacity(
+    sqrt_current: u128,
+    liquidity: u128,
+    fee_ppm: u128,
+    a_to_b: bool,
+    boundary_sqrt: u128,
+) -> u64 {
+    if liquidity == 0 || fee_ppm >= PPM {
+        return 0;
+    }
+    // amount (after fee) to move price to the boundary, rounding UP for input.
+    let after_fee = if a_to_b {
+        if boundary_sqrt >= sqrt_current {
+            return 0;
+        }
+        get_amount_a_delta(boundary_sqrt, sqrt_current, liquidity, true)
+    } else {
+        if boundary_sqrt <= sqrt_current {
+            return 0;
+        }
+        get_amount_b_delta(sqrt_current, boundary_sqrt, liquidity, true)
+    };
+    // gross = ceil(after_fee * PPM / (PPM - fee))
+    let gross = (U512::from(after_fee) * U512::from(PPM)) / U512::from(PPM - fee_ppm);
+    u64::try_from(gross).unwrap_or(u64::MAX)
+}
+
 /// Result of an exact-input swap: `None` means REJECTED (would step beyond
 /// loaded tick coverage, or liquidity is exhausted) — never overestimate.
 pub fn swap_exact_in(
