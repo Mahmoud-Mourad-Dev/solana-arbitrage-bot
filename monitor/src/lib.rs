@@ -20,6 +20,7 @@ pub mod math;
 pub mod meteora_direct_call;
 pub mod meteora_dlmm;
 pub mod meteora_reconstruct;
+pub mod mint_safety;
 pub mod narrow_report;
 pub mod observe_live;
 pub mod observe_report;

@@ -131,6 +131,16 @@ pub struct XdexProvenance {
     pub whirlpool_single_tick_capacity: u64,
     /// Proven: the chosen size did NOT cross a Whirlpool tick.
     pub no_tick_crossed: bool,
+    /// Best fee-less round-trip edge (wsol_out - amount_in) over the size grid,
+    /// IGNORING costs — the gross-positive signal, separate from competitive net.
+    #[serde(default)]
+    pub best_gross_lamports: i128,
+    /// Size at the best gross edge.
+    #[serde(default)]
+    pub best_gross_size: u64,
+    /// Whether the single-tick clamp was BINDING (capacity < grid max).
+    #[serde(default)]
+    pub clamp_binding: bool,
     pub meteora_slot: u64,
     pub whirlpool_slot: u64,
     pub meteora_pair_hash: String,
@@ -862,6 +872,9 @@ mod tests {
             whirlpool_tick_current: -25773,
             whirlpool_single_tick_capacity: 7_257_438_556,
             no_tick_crossed: true,
+            best_gross_lamports: 1_234,
+            best_gross_size: 1_000_000_000,
+            clamp_binding: false,
             meteora_slot: 100,
             whirlpool_slot: 101,
             meteora_pair_hash: "abc".into(),

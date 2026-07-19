@@ -28,6 +28,7 @@ use solana_account_decoder::UiAccountEncoding;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
 use solana_client::rpc_filter::{Memcmp, MemcmpEncodedBytes, RpcFilterType};
+use solana_sdk::account::Account;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::sysvar::clock::ID as CLOCK_ID;
@@ -93,6 +94,246 @@ fn discover(rpc: &RpcClient) -> Result<Vec<XRoute>> {
     }
     if out.is_empty() {
         bail!("no cross-DEX routes discovered");
+    }
+    Ok(out)
+}
+
+/// A candidate pool on one venue, keyed later by its non-WSOL token.
+struct MetCand {
+    pair: Pubkey,
+    reserve_x: Pubkey,
+    reserve_y: Pubkey,
+    wsol_vault: Pubkey,
+}
+struct WhpCand {
+    pool: Pubkey,
+    va: Pubkey,
+    vb: Pubkey,
+    ma: Pubkey,
+    mb: Pubkey,
+    wsol_vault: Pubkey,
+    liquidity: u128,
+}
+
+/// S14B-3 WIDE discovery: enumerate ALL WSOL-paired Meteora DLMM + Orca
+/// Whirlpool pools, join strictly by exact token mint, screen the token mint
+/// (classic SPL, no mint/freeze authority, no extensions), gate liquidity via
+/// WSOL-vault balance on BOTH legs, and enumerate up to ~50 validated route
+/// combinations (top pools per venue per token — not only the single deepest).
+/// Returns (routes, rejection tally, stats line).
+fn discover_wide(
+    rpc: &RpcClient,
+    max_routes: usize,
+) -> Result<(Vec<XRoute>, BTreeMap<String, usize>, String)> {
+    let wsol = pk(WSOL);
+    let mut reject: BTreeMap<String, usize> = BTreeMap::new();
+    let mut bump = |k: &str| *reject.entry(k.to_string()).or_default() += 1;
+
+    // ── enumerate Meteora WSOL pairs (token_x@88 / token_y@120). ──
+    let mut met_by_token: HashMap<Pubkey, Vec<MetCand>> = HashMap::new();
+    let mut met_pools = 0usize;
+    for (off_wsol, wsol_is_x) in [(88u64, true), (120u64, false)] {
+        for (addr, acc) in gpa(rpc, DLMM_PROGRAM, 904, off_wsol, WSOL)? {
+            let Ok(p) = decode_lb_pair(&acc.data) else {
+                bump("meteora_decode");
+                continue;
+            };
+            if p.status != 0 {
+                bump("meteora_disabled");
+                continue;
+            }
+            met_pools += 1;
+            let token = if wsol_is_x {
+                p.token_y_mint
+            } else {
+                p.token_x_mint
+            };
+            if token == wsol {
+                continue;
+            }
+            let wsol_vault = if wsol_is_x { p.reserve_x } else { p.reserve_y };
+            met_by_token.entry(token).or_default().push(MetCand {
+                pair: addr,
+                reserve_x: p.reserve_x,
+                reserve_y: p.reserve_y,
+                wsol_vault,
+            });
+        }
+    }
+
+    // ── enumerate Whirlpool WSOL pools (mint_a@101 / mint_b@181). ──
+    let mut whp_by_token: HashMap<Pubkey, Vec<WhpCand>> = HashMap::new();
+    let mut whp_pools = 0usize;
+    for (off_wsol, wsol_is_a) in [(101u64, true), (181u64, false)] {
+        for (addr, acc) in gpa(rpc, WHIRLPOOL_PROGRAM_ID, 653, off_wsol, WSOL)? {
+            if acc.owner != pk(WHIRLPOOL_PROGRAM_ID) {
+                continue;
+            }
+            let Some(d) = arb_monitor::parsers::decode_whirlpool(&acc.data) else {
+                bump("whirlpool_decode");
+                continue;
+            };
+            if d.liquidity == 0 {
+                bump("whirlpool_empty");
+                continue;
+            }
+            whp_pools += 1;
+            let token = if wsol_is_a {
+                d.token_mint_b
+            } else {
+                d.token_mint_a
+            };
+            if token == wsol {
+                continue;
+            }
+            let wsol_vault = if wsol_is_a {
+                d.token_vault_a
+            } else {
+                d.token_vault_b
+            };
+            whp_by_token.entry(token).or_default().push(WhpCand {
+                pool: addr,
+                va: d.token_vault_a,
+                vb: d.token_vault_b,
+                ma: d.token_mint_a,
+                mb: d.token_mint_b,
+                wsol_vault,
+                liquidity: d.liquidity,
+            });
+        }
+    }
+
+    // ── join by exact token mint. ──
+    let shared: Vec<Pubkey> = met_by_token
+        .keys()
+        .filter(|t| whp_by_token.contains_key(*t))
+        .cloned()
+        .collect();
+
+    // ── screen each shared token mint (batched). ──
+    let mint_keys: Vec<Pubkey> = shared.clone();
+    let mint_accs = get_multi(rpc, &mint_keys)?;
+    let mut safe_tokens: Vec<Pubkey> = Vec::new();
+    for (t, acc) in shared.iter().zip(&mint_accs) {
+        let Some(acc) = acc else {
+            bump("mint_missing");
+            continue;
+        };
+        match arb_monitor::mint_safety::screen_mint(&acc.owner.to_string(), &acc.data) {
+            Ok(()) => safe_tokens.push(*t),
+            Err(e) => bump(&format!("mint:{e:?}").replace(char::is_whitespace, "")),
+        }
+    }
+
+    // ── liquidity gate + rank: rank whirlpool cands by on-pool liquidity; for
+    // Meteora rank by WSOL vault balance (batched). Keep top-2 per venue. ──
+    // Fetch WSOL vault balances for all cand pools of safe tokens.
+    let mut vault_keys: Vec<Pubkey> = Vec::new();
+    for t in &safe_tokens {
+        for m in &met_by_token[t] {
+            vault_keys.push(m.wsol_vault);
+        }
+        for w in &whp_by_token[t] {
+            vault_keys.push(w.wsol_vault);
+        }
+    }
+    let vault_accs = get_multi(rpc, &vault_keys)?;
+    let bal: HashMap<Pubkey, u64> = vault_keys
+        .iter()
+        .zip(&vault_accs)
+        .filter_map(|(k, a)| {
+            a.as_ref()
+                .and_then(|a| decode_token_amount(&a.data))
+                .map(|b| (*k, b))
+        })
+        .collect();
+    const MIN_WSOL: u64 = 2_000_000_000; // 2 SOL executable depth on each leg
+
+    let mut routes: Vec<XRoute> = Vec::new();
+    for t in &safe_tokens {
+        let mut mets: Vec<&MetCand> = met_by_token[t]
+            .iter()
+            .filter(|m| bal.get(&m.wsol_vault).copied().unwrap_or(0) >= MIN_WSOL)
+            .collect();
+        mets.sort_by_key(|m| std::cmp::Reverse(bal.get(&m.wsol_vault).copied().unwrap_or(0)));
+        let mut whps: Vec<&WhpCand> = whp_by_token[t]
+            .iter()
+            .filter(|w| bal.get(&w.wsol_vault).copied().unwrap_or(0) >= MIN_WSOL)
+            .collect();
+        whps.sort_by_key(|w| std::cmp::Reverse(w.liquidity));
+        if mets.is_empty() {
+            bump("meteora_thin");
+        }
+        if whps.is_empty() {
+            bump("whirlpool_thin");
+        }
+        // Combinations: top-2 × top-2 per token (not only the single deepest).
+        for m in mets.iter().take(2) {
+            for w in whps.iter().take(2) {
+                routes.push(XRoute {
+                    token: *t,
+                    meteora_pair: m.pair,
+                    dlmm_bv: m.reserve_x,
+                    dlmm_qv: m.reserve_y,
+                    whirlpool: w.pool,
+                    wp_vault_a: w.va,
+                    wp_vault_b: w.vb,
+                    wp_mint_a: w.ma,
+                    wp_mint_b: w.mb,
+                });
+                if routes.len() >= max_routes {
+                    break;
+                }
+            }
+            if routes.len() >= max_routes {
+                break;
+            }
+        }
+        if routes.len() >= max_routes {
+            break;
+        }
+    }
+
+    let stats = format!(
+        "meteora_wsol_pools={met_pools} whirlpool_wsol_pools={whp_pools} shared_tokens={} safe_tokens={} routes={}",
+        shared.len(),
+        safe_tokens.len(),
+        routes.len()
+    );
+    Ok((routes, reject, stats))
+}
+
+/// getProgramAccounts with a dataSize + single memcmp filter (base58 pubkey).
+fn gpa(
+    rpc: &RpcClient,
+    program: &str,
+    data_size: u64,
+    offset: u64,
+    memcmp_b58: &str,
+) -> Result<Vec<(Pubkey, Account)>> {
+    let cfg = RpcProgramAccountsConfig {
+        filters: Some(vec![
+            RpcFilterType::DataSize(data_size),
+            RpcFilterType::Memcmp(Memcmp::new(
+                offset as usize,
+                MemcmpEncodedBytes::Base58(memcmp_b58.to_string()),
+            )),
+        ]),
+        account_config: RpcAccountInfoConfig {
+            encoding: Some(UiAccountEncoding::Base64),
+            commitment: Some(CommitmentConfig::confirmed()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Ok(rpc.get_program_accounts_with_config(&pk(program), cfg)?)
+}
+
+/// Batched getMultipleAccounts in chunks of 100.
+fn get_multi(rpc: &RpcClient, keys: &[Pubkey]) -> Result<Vec<Option<Account>>> {
+    let mut out = Vec::with_capacity(keys.len());
+    for chunk in keys.chunks(100) {
+        out.extend(rpc.get_multiple_accounts(chunk)?);
     }
     Ok(out)
 }
@@ -388,9 +629,36 @@ fn main() -> Result<()> {
     let out_dir = std::env::var("XDEX_OUT_DIR").unwrap_or_else(|_| "reports/xdex".into());
     std::fs::create_dir_all(&out_dir).ok();
 
-    println!("=== S14B-2 Meteora↔Whirlpool discovery (quote-only, single-tick clamped) ===");
-    println!("discovering routes…");
-    let routes = discover(&rpc)?;
+    let wide = args.iter().any(|a| a == "--wide");
+    let max_routes: usize = std::env::var("XDEX_MAX_ROUTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    let routes = if wide {
+        println!(
+            "=== S14B-3 WIDE Meteora↔Whirlpool discovery (quote-only, single-tick clamped) ==="
+        );
+        println!("enumerating all WSOL-paired pools on both venues…");
+        let (routes, reject, stats) = discover_wide(&rpc, max_routes)?;
+        println!("  {stats}");
+        println!("  rejections (typed): {reject:?}");
+        if routes.is_empty() {
+            bail!("wide discovery produced no validated routes");
+        }
+        for r in &routes {
+            println!(
+                "  route token {} : meteora {} × whirlpool {}",
+                &r.token.to_string()[..8],
+                &r.meteora_pair.to_string()[..8],
+                &r.whirlpool.to_string()[..8]
+            );
+        }
+        routes
+    } else {
+        println!("=== S14B-2 Meteora↔Whirlpool discovery (quote-only, single-tick clamped) ===");
+        println!("discovering routes…");
+        discover(&rpc)?
+    };
     let wsol = pk(WSOL);
     let cost = competitive_model();
     let grid = SizeGrid {
@@ -467,14 +735,39 @@ fn main() -> Result<()> {
     let equiv = serde_json::to_value(&m).unwrap() == serde_json::to_value(&off).unwrap();
 
     let ok = events.iter().filter(|e| e.is_ok()).count();
-    let clamp_hits = events
+    let xs: Vec<&XdexProvenance> = events.iter().filter_map(|e| e.xdex.as_ref()).collect();
+    let gross_positive = xs.iter().filter(|x| x.best_gross_lamports > 0).count();
+    let competitive_positive = events
         .iter()
-        .filter_map(|e| e.xdex.as_ref())
-        .filter(|x| x.no_tick_crossed)
+        .filter(|e| e.is_ok() && e.profitable_competitive)
         .count();
+    let clamp_binding = xs.iter().filter(|x| x.clamp_binding).count();
+    let best_gross = xs.iter().map(|x| x.best_gross_lamports).max().unwrap_or(0);
+    let best_gross_route = xs.iter().max_by_key(|x| x.best_gross_lamports);
+    let best_net = events
+        .iter()
+        .map(|e| e.competitive_net_lamports)
+        .max()
+        .unwrap_or(0);
     println!(
-        "\nsweeps={sweeps} events={} ok={ok} clamp-confirmed-no-cross={clamp_hits}",
+        "\nsweeps={sweeps} events={} ok={ok} valid_polls={ok}",
         events.len()
+    );
+    println!(
+        "gross-positive candidates={gross_positive}  competitive-positive candidates={competitive_positive}"
+    );
+    println!(
+        "best gross edge={best_gross} lamports ({:.6} SOL){}",
+        best_gross as f64 / 1e9,
+        best_gross_route
+            .filter(|x| x.best_gross_lamports > 0)
+            .map(|x| format!("  @size {} on {}", x.best_gross_size, &x.meteora_pair[..8]))
+            .unwrap_or_default()
+    );
+    println!("best competitive net={best_net} lamports");
+    println!(
+        "single-tick clamp BINDING on {}/{} ok polls",
+        clamp_binding, ok
     );
     println!(
         "episodes={} competitive-positive-polls: routes classed A/Fl/Fr/N = {}/{}/{}/{}",
@@ -501,6 +794,30 @@ fn sym(mint: &Pubkey) -> &'static str {
     }
 }
 
+/// Best fee-less round-trip edge (wsol_out - amount_in) over a coarse log grid,
+/// ignoring costs. round_trip already refuses a Whirlpool tick crossing, so this
+/// stays within the single-tick clamp. Returns (best_edge, size_at_best).
+fn best_gross_edge(route: &Route, wsol: &Pubkey, grid: &SizeGrid) -> (i128, u64) {
+    let mut best = (i128::MIN, 0u64);
+    let n = 24u32;
+    let (lmin, lmax) = ((grid.min.max(1) as f64).ln(), (grid.max.max(2) as f64).ln());
+    for i in 0..n {
+        let t = i as f64 / (n - 1) as f64;
+        let size = (lmin + (lmax - lmin) * t).exp().round() as u64;
+        if let Ok((_mid, out)) = route.round_trip(wsol, size) {
+            let edge = out as i128 - size as i128;
+            if edge > best.0 {
+                best = (edge, size);
+            }
+        }
+    }
+    if best.0 == i128::MIN {
+        (0, 0)
+    } else {
+        best
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_event(
     key: &str,
@@ -519,62 +836,51 @@ fn build_event(
         Leg::Whirlpool(w) => w.single_tick_capacity_for(&r.token),
         _ => 0,
     };
-    let (profitable, gross, net, size, xprov) = match optimize(route, wsol, cost, grid) {
-        Some(c) => {
-            // Re-evaluate once through the same route (spec §6).
-            let (leg1_fee, leg2_fee) = route
-                .evaluate(wsol, c.amount_in, cost)
-                .map(|cc| (cc.leg1_fee, cc.leg2_fee))
-                .unwrap_or((c.leg1_fee, c.leg2_fee));
-            let no_cross = route.round_trip(wsol, c.amount_in).is_ok();
-            let x = XdexProvenance {
-                meteora_pair: r.meteora_pair.to_string(),
-                whirlpool_pool: r.whirlpool.to_string(),
-                direction: format!("WSOL->{}->WSOL", sym(&r.token)),
-                amount_in: c.amount_in,
-                token_mid: c.token_mid,
-                wsol_out: c.wsol_out,
-                meteora_fee: leg1_fee,
-                whirlpool_fee: leg2_fee,
-                whirlpool_tick_current: tick_cur,
-                whirlpool_single_tick_capacity: cap,
-                no_tick_crossed: no_cross,
-                meteora_slot: met_slot,
-                whirlpool_slot: wp_slot,
-                meteora_pair_hash: met_hash,
-                whirlpool_pool_hash: wp_hash,
-            };
-            (
-                c.net_profit >= 0,
-                c.gross_profit,
-                c.net_profit,
-                c.amount_in,
-                Some(x),
-            )
-        }
-        None => (
-            false,
-            0,
-            0,
-            0,
-            Some(XdexProvenance {
-                meteora_pair: r.meteora_pair.to_string(),
-                whirlpool_pool: r.whirlpool.to_string(),
-                direction: format!("WSOL->{}->WSOL", sym(&r.token)),
-                amount_in: 0,
-                token_mid: 0,
-                wsol_out: 0,
-                meteora_fee: 0,
-                whirlpool_fee: 0,
-                whirlpool_tick_current: tick_cur,
-                whirlpool_single_tick_capacity: cap,
-                no_tick_crossed: true,
-                meteora_slot: met_slot,
-                whirlpool_slot: wp_slot,
-                meteora_pair_hash: met_hash,
-                whirlpool_pool_hash: wp_hash,
-            }),
+    let clamp_binding = cap < grid.max;
+    // GROSS-positive signal: best fee-less round-trip edge over a coarse grid,
+    // ignoring costs and clamped to within-tick sizes (round_trip rejects a
+    // crossing). Separate from the competitive (cost-gated) optimum.
+    let (best_gross, best_gross_size) = best_gross_edge(route, wsol, grid);
+    // Fee provenance / competitive optimum.
+    let opt = optimize(route, wsol, cost, grid);
+    let (amount_in, token_mid, wsol_out, meteora_fee, whirlpool_fee) = match &opt {
+        Some(c) => (c.amount_in, c.token_mid, c.wsol_out, c.leg1_fee, c.leg2_fee),
+        None => (0, 0, 0, 0, 0),
+    };
+    let no_cross = if amount_in > 0 {
+        route.round_trip(wsol, amount_in).is_ok()
+    } else {
+        true
+    };
+    let x = XdexProvenance {
+        meteora_pair: r.meteora_pair.to_string(),
+        whirlpool_pool: r.whirlpool.to_string(),
+        direction: format!("WSOL->{}->WSOL", sym(&r.token)),
+        amount_in,
+        token_mid,
+        wsol_out,
+        meteora_fee,
+        whirlpool_fee,
+        whirlpool_tick_current: tick_cur,
+        whirlpool_single_tick_capacity: cap,
+        no_tick_crossed: no_cross,
+        best_gross_lamports: best_gross,
+        best_gross_size,
+        clamp_binding,
+        meteora_slot: met_slot,
+        whirlpool_slot: wp_slot,
+        meteora_pair_hash: met_hash,
+        whirlpool_pool_hash: wp_hash,
+    };
+    let (profitable, gross, net, size, xprov) = match &opt {
+        Some(c) => (
+            c.net_profit >= 0,
+            c.gross_profit,
+            c.net_profit,
+            c.amount_in,
+            Some(x),
         ),
+        None => (false, 0, 0, 0, Some(x)),
     };
     PollEvent {
         route: key.to_string(),
