@@ -129,6 +129,20 @@ pub fn reject_reason(code: &str) -> String {
     code.to_string()
 }
 
+/// Per-family persistence accumulator. `hours` is the set of distinct
+/// wall-clock hours in which the family produced profitable arbitrage — the
+/// metric that separates a repeated business from a few lucky events.
+#[derive(Debug, Default, Clone)]
+pub struct PersistenceStat {
+    pub n: u64,
+    pub total_net: i128,
+    pub nets: Vec<i128>,
+    pub signers: HashSet<String>,
+    pub hours: HashSet<i64>,
+    pub min_time: Option<i64>,
+    pub max_time: Option<i64>,
+}
+
 /// Classify by structure. A tx is only `PURE_ATOMIC_ARBITRAGE` when it closes a
 /// WSOL round trip with positive net inside ONE transaction and touches ≥2 DEX
 /// programs. Everything else is labelled honestly.
@@ -178,21 +192,53 @@ fn main() -> Result<()> {
     println!("=== S15A / Phase 0.5 forensic scan (READ-ONLY) ===");
     println!("seeds: {} | per-seed signatures: {per_seed}", seeds.len());
 
+    // Signature collection with PAGINATION (`before` cursor) so a seed can
+    // contribute more than one 1000-signature page and the sample spans a
+    // longer wall-clock window — required for the persistence measurement.
     let mut sigs: Vec<(String, u64)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for s in &seeds {
-        let key = Pubkey::from_str(s).with_context(|| format!("bad seed {s}"))?;
-        let list = rpc
-            .get_signatures_for_address(&key)
-            .with_context(|| format!("getSignaturesForAddress {s}"))?;
-        let mut n = 0;
-        for si in list.into_iter().filter(|x| x.err.is_none()) {
-            if n >= per_seed {
+        let Ok(key) = Pubkey::from_str(s) else {
+            println!("  seed {s}: INVALID pubkey — skipped");
+            continue;
+        };
+        let mut n = 0usize;
+        let mut before: Option<Signature> = None;
+        while n < per_seed {
+            let cfg = solana_client::rpc_client::GetConfirmedSignaturesForAddress2Config {
+                before,
+                until: None,
+                limit: Some(1000.min(per_seed - n).max(1)),
+                commitment: Some(CommitmentConfig::confirmed()),
+            };
+            let list = match rpc.get_signatures_for_address_with_config(&key, cfg) {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "  seed {}… page failed ({e}) — keeping what we have",
+                        &s[..8]
+                    );
+                    break;
+                }
+            };
+            if list.is_empty() {
                 break;
             }
-            if seen.insert(si.signature.clone()) {
-                sigs.push((si.signature, si.slot));
-                n += 1;
+            let last = list
+                .last()
+                .and_then(|x| Signature::from_str(&x.signature).ok());
+            for si in list.into_iter().filter(|x| x.err.is_none()) {
+                if n >= per_seed {
+                    break;
+                }
+                if seen.insert(si.signature.clone()) {
+                    sigs.push((si.signature, si.slot));
+                    n += 1;
+                }
+            }
+            match last {
+                Some(l) => before = Some(l),
+                None => break,
             }
         }
         println!("  seed {}… collected {n}", &s[..8]);
@@ -225,6 +271,65 @@ fn main() -> Result<()> {
                 rejected_log.push((sig_s.clone(), reason));
             }
         }
+    }
+
+    // ── PERSISTENCE: is a family a repeated business, or a few lucky events? ──
+    // Only PURE_ATOMIC_ARBITRAGE counts. For each family we report the number of
+    // distinct hours it produced profit in, its span, and how concentrated the
+    // profit is in its single best transaction.
+    let arbs: Vec<&AcceptedTx> = accepted
+        .iter()
+        .filter(|a| a.classification == "PURE_ATOMIC_ARBITRAGE")
+        .collect();
+    let mut fam_stats: BTreeMap<String, PersistenceStat> = BTreeMap::new();
+    for a in &arbs {
+        let e = fam_stats.entry(a.route_family.clone()).or_default();
+        e.n += 1;
+        e.total_net += a.net_profit;
+        e.nets.push(a.net_profit);
+        e.signers.insert(a.signer.clone());
+        if let Some(t) = a.block_time {
+            e.hours.insert(t / 3600);
+            e.min_time = e.min_time.map_or(Some(t), |m: i64| Some(m.min(t)));
+            e.max_time = e.max_time.map_or(Some(t), |m: i64| Some(m.max(t)));
+        }
+    }
+    println!(
+        "\n═══ PERSISTENCE (PURE_ATOMIC_ARBITRAGE only, n={}) ═══",
+        arbs.len()
+    );
+    println!(
+        "{:<46}{:>4}{:>14}{:>12}{:>8}{:>8}{:>9}{:>9}",
+        "family", "n", "total_SOL", "median", "hours", "span_h", "signers", "top_share"
+    );
+    let mut rows: Vec<(&String, &PersistenceStat)> = fam_stats.iter().collect();
+    rows.sort_by_key(|(_, s)| std::cmp::Reverse(s.total_net));
+    for (fam, s) in &rows {
+        let mut nets = s.nets.clone();
+        nets.sort_unstable();
+        let median = nets[nets.len() / 2];
+        let span_h = match (s.min_time, s.max_time) {
+            (Some(a), Some(b)) => (b - a) as f64 / 3600.0,
+            _ => 0.0,
+        };
+        // Concentration: share of the family's total net held by its best tx.
+        let top = nets.last().copied().unwrap_or(0);
+        let share = if s.total_net > 0 {
+            top as f64 * 100.0 / s.total_net as f64
+        } else {
+            0.0
+        };
+        println!(
+            "{:<46}{:>4}{:>14.6}{:>12}{:>8}{:>8.1}{:>9}{:>8.0}%",
+            fam.chars().take(45).collect::<String>(),
+            s.n,
+            s.total_net as f64 / 1e9,
+            median,
+            s.hours.len(),
+            span_h,
+            s.signers.len(),
+            share
+        );
     }
 
     // ── report ──

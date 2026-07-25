@@ -124,3 +124,31 @@ Full evidence: `docs/forensic-route-selection-s15a.md`. Tool:
 repeatability and detectability but fails on magnitude against a six-phase build
 cost. Phases 1–8 stay blocked. Recommended next step: widen the forensic sample
 (read-only) to test per-family persistence over hours before choosing any venue.
+
+### Phase 0.5b — widened sample (COMPLETE)
+
+Full evidence: `docs/forensic-widened-s15a.md`.
+
+**3,654 signatures, two independent sampling methods** (pool-seeded/unbiased +
+signer-seeded/winner-following), 460 profitable atomic arbitrages.
+
+- `raydium-clmm+raydium-v4` did **not** improve under any method: 5 txs (Scan A),
+  3 txs (Scan B), 0.011 SOL combined — 16th of 20 families in the unbiased scan.
+- Raydium CLMM *is* used in profitable arbitrage (105 arbs / 1.13 SOL in Scan B)
+  but paired with **Meteora DLMM or Orca Whirlpool**, never meaningfully with
+  Raydium v4. The "Raydium against Raydium" premise is unsupported.
+- Persistence inverted the first pass's headline: `pump-amm+raydium-v4` has the
+  biggest totals but arrives in 1–2 hours inside ~6 minutes (a burst, 21 distinct
+  signers in Scan A). `meteora-dlmm+orca-whirlpool` earns across **15 distinct
+  hours over 53 h from 4 repeat signers, 12% top-tx concentration, zero Jito
+  tips** — the only repeatable-business profile in the data.
+
+**Verdict: `NO EVIDENCE-JUSTIFIED RAYDIUM CLMM BUILD` — confirmed and closed.**
+Phases 1–8 remain blocked; recommend retiring this thesis.
+
+**Open question for the director:** the most persistent family is the venue pair
+archived in S14B-3. That archive measured 40 depth-ranked WSOL-major routes and
+correctly found no quotable edge there; these operators trade different markets
+(median 5 DEX instructions, 342k CU). Recommended next step is a read-only
+reconstruction of those 45 transactions (exact pools/mints/hops + mint-safety
+screen) before any build decision.
