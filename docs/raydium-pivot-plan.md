@@ -30,15 +30,15 @@ measure it honestly, not to make the numbers look good.
 | Phase | Description | Gate | Status |
 |---|---|---|---|
 | 0 | Baseline + 4th arming gate + this plan | baseline green, plan committed | **DONE** |
-| 0.5 | **Forensic falsification: is there a detectable backrun edge?** | evidence-backed go/no-go | **IN PROGRESS** |
-| 1 | Raydium CLMM decoding (read-only, exact) | 3+ mainnet fixtures decode; PDAs match chain | blocked on 0.5 |
-| 2 | Exact CLMM swap math | ≥20 cases bit-exact vs chain | blocked on 0.5 |
-| 3 | Pair universe (WSOL on BOTH venues) | ≥30 pairs pass full funnel | blocked on 0.5 |
-| 4 | Event-driven route engine | deterministic replay; p99 < 1 ms/route | blocked on 0.5 |
-| 5 | Piecewise-exact sizing + real cost model | property test vs ternary; capacity respected | blocked on 0.5 |
-| 6 | Executor + on-chain program CLMM support | workspace green incl. new mollusk cases | blocked on 0.5 |
-| 7 | **VM-level confirmation** (never done before) | ≥24h confirm run, zero SVM mismatches | blocked on 0.5 |
-| 8 | Shadow submission → arm | written go/no-go with real numbers | blocked on 0.5 |
+| 0.5 | **Forensic falsification: is there a detectable backrun edge?** | evidence-backed go/no-go | **DONE — NO EVIDENCE-JUSTIFIED CLMM BUILD** |
+| 1 | Raydium CLMM decoding (read-only, exact) | 3+ mainnet fixtures decode; PDAs match chain | **BLOCKED — gate 0.5 not met** |
+| 2 | Exact CLMM swap math | ≥20 cases bit-exact vs chain | **BLOCKED — gate 0.5 not met** |
+| 3 | Pair universe (WSOL on BOTH venues) | ≥30 pairs pass full funnel | **BLOCKED — gate 0.5 not met** |
+| 4 | Event-driven route engine | deterministic replay; p99 < 1 ms/route | **BLOCKED — gate 0.5 not met** |
+| 5 | Piecewise-exact sizing + real cost model | property test vs ternary; capacity respected | **BLOCKED — gate 0.5 not met** |
+| 6 | Executor + on-chain program CLMM support | workspace green incl. new mollusk cases | **BLOCKED — gate 0.5 not met** |
+| 7 | **VM-level confirmation** (never done before) | ≥24h confirm run, zero SVM mismatches | **BLOCKED — gate 0.5 not met** |
+| 8 | Shadow submission → arm | written go/no-go with real numbers | **BLOCKED — gate 0.5 not met** |
 
 ### Phase 0 — baseline (COMPLETE)
 
@@ -104,3 +104,23 @@ per-pool cycle index. The multi-second polling existed only in the observe/
 research tools. The archived strategies died because **measured gross edge was
 zero**, not because the trigger was slow — a faster trigger cannot rescue a round
 trip that is already negative on a static snapshot.
+
+### Phase 0.5 result (COMPLETE)
+
+Full evidence: `docs/forensic-route-selection-s15a.md`. Tool:
+`forensic-arb-scan` (read-only).
+
+600 signatures scanned → 311 multi-DEX → **60 profitable atomic arbitrage**.
+
+- `raydium-clmm+raydium-v4` (the proposed thesis): **5 profitable txs, 4 signers,
+  0.0048 SOL total realized net — ranks 6th.**
+- `pump-amm+raydium-v4`: **1.018 SOL total realized net, 8 txs, 7 signers** —
+  213× the proposed family in the same window.
+- Detectability for the CLMM family looks favourable (0 visible Jito tip on all
+  5, deep block positions, 0.1% overall tip share of gross) — this is priority-fee
+  competition, not a private-flow auction.
+
+**Verdict: `NO EVIDENCE-JUSTIFIED RAYDIUM CLMM BUILD`.** The family passes
+repeatability and detectability but fails on magnitude against a six-phase build
+cost. Phases 1–8 stay blocked. Recommended next step: widen the forensic sample
+(read-only) to test per-family persistence over hours before choosing any venue.
