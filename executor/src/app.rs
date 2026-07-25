@@ -64,9 +64,14 @@ impl App {
             dry_run = cfg.dry_run,
             enable_submit = cfg.enable_submit,
             enable_jito = cfg.enable_jito,
+            strategy = %cfg.strategy,
             "executor ready"
         );
-        if cfg.mode.allows_live_submission() && !cfg.dry_run && cfg.enable_submit && cfg.enable_jito
+        if cfg.mode.allows_live_submission()
+            && !cfg.dry_run
+            && cfg.enable_submit
+            && cfg.enable_jito
+            && cfg.strategy_armed()
         {
             warn!("SUBMISSION ARMED — MODE=live, live bundles will be sent to Jito");
         }
@@ -186,12 +191,14 @@ impl App {
         })?;
 
         // 7) Submission gate: real submits require MODE=live (armed) AND
-        //    DRY_RUN=false AND ENABLE_SUBMIT=true AND ENABLE_JITO=true. In any
-        //    other mode (observe/replay/simulate) we simulate and never send.
+        //    DRY_RUN=false AND ENABLE_SUBMIT=true AND ENABLE_JITO=true AND
+        //    STRATEGY=raydium-dual (Phase 0 fourth gate — an old .env cannot
+        //    arm the new path). Any other mode simulates and never sends.
         let submit_armed = self.cfg.mode.allows_live_submission()
             && !self.cfg.dry_run
             && self.cfg.enable_submit
-            && self.cfg.enable_jito;
+            && self.cfg.enable_jito
+            && self.cfg.strategy_armed();
         if !submit_armed {
             let sim = self.rpc.simulate_transaction(&tx).await?;
             info!(
@@ -203,6 +210,7 @@ impl App {
                 dry_run = self.cfg.dry_run,
                 enable_submit = self.cfg.enable_submit,
                 enable_jito = self.cfg.enable_jito,
+                strategy_armed = self.cfg.strategy_armed(),
                 "SIMULATION ONLY (submission disarmed)"
             );
             return Ok(());

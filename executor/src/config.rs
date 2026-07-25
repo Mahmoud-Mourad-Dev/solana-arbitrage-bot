@@ -47,7 +47,15 @@ pub struct Config {
     /// Opportunities whose projected net (gross - tip - fees - margin)
     /// falls below this are rejected before any RPC work.
     pub min_net_profit_lamports: u64,
+    /// FOURTH ARMING GATE (Raydium pivot, Phase 0). Submission additionally
+    /// requires `STRATEGY=raydium-dual`, so an old `.env` that already carries
+    /// DRY_RUN=false + ENABLE_SUBMIT=true + ENABLE_JITO=true can NEVER arm the
+    /// new strategy path by accident. Default is the empty string (disarmed).
+    pub strategy: String,
 }
+
+/// The only `STRATEGY` value that may arm the Raydium dual-venue path.
+pub const STRATEGY_RAYDIUM_DUAL: &str = "raydium-dual";
 
 fn env_str(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.to_string())
@@ -114,7 +122,15 @@ impl Config {
             enable_submit,
             enable_jito: env_parse("ENABLE_JITO", false)?,
             min_net_profit_lamports: env_parse("MIN_NET_PROFIT_LAMPORTS", 100_000u64)?,
+            strategy: env_str("STRATEGY", ""),
         })
+    }
+
+    /// Is the Raydium dual-venue strategy explicitly selected? This is an
+    /// ADDITIONAL requirement for submission — it never relaxes the existing
+    /// MODE/DRY_RUN/ENABLE_SUBMIT/ENABLE_JITO gates.
+    pub fn strategy_armed(&self) -> bool {
+        self.strategy == STRATEGY_RAYDIUM_DUAL
     }
 
     /// Total non-tip lamports a submission burns if it lands.
@@ -137,5 +153,88 @@ impl Config {
             },
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A config with every OTHER gate already open — only `strategy` varies.
+    /// This is exactly the dangerous case: an old `.env` that was armed for the
+    /// previous strategy must NOT arm the Raydium dual-venue path.
+    fn armed_except_strategy(strategy: &str) -> Config {
+        Config {
+            mode: Mode::Observe,
+            live_marker_path: ".live-armed".into(),
+            rpc_url: String::new(),
+            redis_url: String::new(),
+            redis_channel: String::new(),
+            keypair_path: String::new(),
+            arb_program_id: Pubkey::new_unique(),
+            jito_url: String::new(),
+            min_tip_lamports: 0,
+            max_tip_lamports: 0,
+            cu_limit: 700_000,
+            cu_price_microlamports: 0,
+            profit_margin_lamports: 0,
+            max_opportunity_age_ms: 750,
+            max_inflight: 1,
+            resubmit_cooldown_ms: 0,
+            whirlpool_ttl_secs: 10,
+            lookup_tables: vec![],
+            dry_run: false,
+            enable_submit: true,
+            enable_jito: true,
+            min_net_profit_lamports: 0,
+            strategy: strategy.into(),
+        }
+    }
+
+    #[test]
+    fn strategy_gate_requires_exact_value() {
+        assert!(armed_except_strategy(STRATEGY_RAYDIUM_DUAL).strategy_armed());
+        // Every other value — including the legacy empty default — is disarmed.
+        for s in [
+            "",
+            "raydium",
+            "raydium_dual",
+            "RAYDIUM-DUAL",
+            "meteora-pump",
+        ] {
+            assert!(
+                !armed_except_strategy(s).strategy_armed(),
+                "STRATEGY={s:?} must NOT arm"
+            );
+        }
+    }
+
+    #[test]
+    fn strategy_gate_is_additive_not_a_relaxation() {
+        // With STRATEGY set but the OLD gates closed, submission is still off.
+        let mut cfg = armed_except_strategy(STRATEGY_RAYDIUM_DUAL);
+        cfg.dry_run = true;
+        let armed = cfg.mode.allows_live_submission()
+            && !cfg.dry_run
+            && cfg.enable_submit
+            && cfg.enable_jito
+            && cfg.strategy_armed();
+        assert!(!armed, "STRATEGY must never override DRY_RUN");
+
+        let mut cfg = armed_except_strategy(STRATEGY_RAYDIUM_DUAL);
+        cfg.enable_submit = false;
+        let armed = cfg.mode.allows_live_submission()
+            && !cfg.dry_run
+            && cfg.enable_submit
+            && cfg.enable_jito
+            && cfg.strategy_armed();
+        assert!(!armed, "STRATEGY must never override ENABLE_SUBMIT");
+    }
+
+    #[test]
+    fn observe_mode_is_never_live_even_fully_armed() {
+        // Mode::Observe does not allow live submission regardless of flags.
+        let cfg = armed_except_strategy(STRATEGY_RAYDIUM_DUAL);
+        assert!(!cfg.mode.allows_live_submission());
     }
 }
