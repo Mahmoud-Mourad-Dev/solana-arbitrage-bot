@@ -98,3 +98,7 @@ path = "src/bin/forensic_arb_scan.rs"
 [[bin]]
 name = "forensic-route-recon"
 path = "src/bin/forensic_route_recon.rs"
+
+[[bin]]
+name = "forensics-s15b"
+path = "src/bin/forensics_s15b.rs"
