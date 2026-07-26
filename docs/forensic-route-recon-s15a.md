@@ -1,5 +1,20 @@
 # S15A / Phase 0.5c — Route reconstruction: the S14B archive was wrong
 
+> # ⚠️ INVALIDATED BY S15B — DO NOT CITE
+>
+> The realized-profit figures in this document are an **accounting artefact**.
+> Profit was computed as `signer SOL delta + signer WSOL delta`, which is valid
+> only for a closed cycle. All 45 transactions analysed here are ordinary
+> **purchases of SOL** (45/45 BUY-shaped, 0/45 cycles): the formula books the
+> SOL bought as profit and ignores the USDC paid for it. Priced at market, the
+> 18 priceable transactions go from **+0.082366 SOL to −0.002154 SOL**.
+>
+> Everything downstream of the profit numbers here — the 0.651 SOL headline, the
+> ~0.0025 SOL median, the multi-operator "working strategy" conclusion — is
+> withdrawn. See **`docs/forensics-s15b.md`**.
+
+
+
 READ-ONLY reconstruction of the 45 profitable `meteora-dlmm + orca-whirlpool`
 arbitrages found in the widened sample. No venue code, no observe run, no
 transaction building, no signing, no submission. Tool: `forensic-route-recon`.
