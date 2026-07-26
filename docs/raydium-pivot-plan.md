@@ -152,3 +152,32 @@ correctly found no quotable edge there; these operators trade different markets
 (median 5 DEX instructions, 342k CU). Recommended next step is a read-only
 reconstruction of those 45 transactions (exact pools/mints/hops + mint-safety
 screen) before any build decision.
+
+### Phase 0.5c — route reconstruction (COMPLETE)
+
+Full evidence: `docs/forensic-route-recon-s15a.md`.
+
+Reconstructed all 45 profitable `meteora-dlmm+orca-whirlpool` arbitrages.
+Corrected an over-count (Meteora emits a 1-account event-log CPI after each swap
+that the naive counter treated as a hop). True shape: **19 are 2-hop; 8 are
+exactly `WSOL→USDC→WSOL`, 2 hops, one token** — the precise shape our Route
+engine, ABI and on-chain program already express. Median 0.0025 SOL, 5 distinct
+hours over 53 h, 3 signers, **zero Jito tips**, 184–363k CU, ALT in 45/45, no
+flash loans. Operators run their own on-chain executors (`proVF4pM…`, `DF1ow4t…`)
+— the same architecture as our `program/` crate.
+
+**S14B-3's archive was caused by two of my own selection errors, not by the
+strategy being unprofitable:**
+1. `observe-xdex` ranked pools by depth and kept only the deepest
+   (`Czfq3xZZ`, ts 4). The operators trade `BSddxwYW` (ts 32,896), `Esvfxt3j`
+   (ts 2), `83v8iPyZ` (ts 1) — **all three were in my own S14B-1 discovery output
+   and were discarded by the depth ranking**. The edge is between fee tiers of
+   the same pair.
+2. `mint_safety` rejects USDC (`HasMintAuthority` — Circle can mint), so the wide
+   scan excluded every USDC route. USDC appears in 45/45 of these transactions.
+
+Raydium CLMM stays closed (0.011 SOL, 8 txs across both scans); Phases 1–8 remain
+blocked. Recommended next step: re-open Meteora↔Whirlpool as a **read-only**
+observe slice with corrected pool selection (all fee tiers) and a major-asset
+allowlist, to measure opportunity frequency, size and decay — the three things
+still unknown.

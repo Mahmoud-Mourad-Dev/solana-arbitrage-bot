@@ -94,3 +94,7 @@ path = "src/bin/observe_xdex.rs"
 [[bin]]
 name = "forensic-arb-scan"
 path = "src/bin/forensic_arb_scan.rs"
+
+[[bin]]
+name = "forensic-route-recon"
+path = "src/bin/forensic_route_recon.rs"
