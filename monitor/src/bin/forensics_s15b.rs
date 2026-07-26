@@ -413,9 +413,78 @@ fn nearest_preceding_pool_touch(
     }
 }
 
+/// Realized P&L of a transaction, in lamports of SOL-equivalent VALUE.
+///
+/// THE ACCOUNTING IDENTITY THIS CRATE GOT WRONG (S15B).
+///
+/// The S15A pipeline computed realized profit as `d_sol + d_wsol`. That is
+/// correct ONLY for a closed cycle that begins and ends holding the same
+/// non-SOL inventory. When a signer SPENDS another token to acquire SOL, the
+/// formula books the proceeds of that sale as profit and ignores what was paid
+/// for it — so every ordinary purchase of SOL reports a large fake profit.
+///
+/// This is not hypothetical: all 45 transactions in the S15B fixture are
+/// SOL purchases, and the old formula reported +0.651 SOL of arbitrage that was
+/// never earned. See `docs/forensics-s15b.md`.
+///
+/// `d_quote` is the signer's delta in the quote token (negative = spent),
+/// `quote_per_sol` is the market rate in quote units per SOL, and
+/// `quote_decimals_scale` converts quote units to whole tokens (1e6 for USDC).
+pub fn value_pnl_lamports(
+    d_sol: i128,
+    d_wsol: i128,
+    d_quote: i128,
+    quote_per_sol: f64,
+    quote_decimals_scale: f64,
+) -> i128 {
+    let quote_in_sol = (d_quote as f64 / quote_decimals_scale) / quote_per_sol;
+    d_sol + d_wsol + (quote_in_sol * 1e9) as i128
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const USDC_SCALE: f64 = 1e6;
+
+    /// REGRESSION: the exact on-chain numbers from `5KTk2eUJya…`, one of the 45
+    /// transactions the S15A pipeline reported as a +0.0097 SOL arbitrage.
+    /// The signer spent 0.74 USDC across 5 pools to buy SOL at 74.61 USDC/SOL
+    /// while the market was 73.25 — a purchase at ~1.9% OVER market, not profit.
+    #[test]
+    fn buying_sol_with_usdc_is_not_arbitrage_profit() {
+        let (d_sol, d_wsol, d_usdc) = (9_747_693_i128, 0_i128, -740_000_i128);
+
+        // The OLD formula books the whole SOL inflow as profit.
+        assert_eq!(d_sol + d_wsol, 9_747_693, "the number S15A reported");
+
+        // Priced against the contemporaneous market, it is a LOSS.
+        let v = value_pnl_lamports(d_sol, d_wsol, d_usdc, 73.25, USDC_SCALE);
+        assert!(
+            v < 0,
+            "a purchase above market must not read as profit, got {v}"
+        );
+        assert!(
+            (-400_000..-300_000).contains(&v),
+            "expected ~-0.00035 SOL, got {v}"
+        );
+    }
+
+    /// A genuine closed cycle spends no net quote token, so both formulas agree.
+    #[test]
+    fn closed_cycle_is_unaffected_by_quote_pricing() {
+        let v = value_pnl_lamports(50_000, 0, 0, 74.95, USDC_SCALE);
+        assert_eq!(v, 50_000);
+    }
+
+    /// A user selling SOL at market prices to ~zero — this is what makes value
+    /// pricing a valid arb/user discriminator.
+    #[test]
+    fn market_rate_swap_nets_about_zero() {
+        // sell 0.01 SOL, receive 0.7495 USDC at 74.95 USDC/SOL
+        let v = value_pnl_lamports(-10_000_000, 0, 749_500, 74.95, USDC_SCALE);
+        assert!(v.abs() < 10_000, "market-rate swap should net ~0, got {v}");
+    }
 
     #[test]
     fn fixture_parses_and_is_the_expected_evidence_set() {
@@ -448,14 +517,22 @@ mod tests {
     }
 
     #[test]
-    fn realized_profit_is_positive_for_every_tx() {
-        // These are the WINNERS by construction; a non-positive net would mean
-        // the upstream classifier leaked a loss into the set.
+    fn fixture_net_profit_is_the_discredited_statistic() {
+        // Every fixture net is positive — but this proves nothing about profit.
+        // S15B established that all 45 are SOL PURCHASES, and that
+        // `d_sol + d_wsol` books the SOL bought as profit while ignoring the
+        // USDC paid for it. Priced at market, all 18 that are priceable in
+        // WSOL/USDC alone are NEGATIVE (fixture +0.082366 SOL → true
+        // -0.002154 SOL).
+        //
+        // This test is retained to pin the fixture's contents, NOT to assert
+        // that the values are correct. Use `value_pnl_lamports` for profit.
+        // See docs/forensics-s15b.md.
         let i: Input = serde_json::from_str(INPUT).unwrap();
         for t in &i.transactions {
             assert!(
                 t.net_profit_lamports > 0,
-                "{} net={}",
+                "fixture shape changed: {} net={}",
                 t.sig,
                 t.net_profit_lamports
             );
