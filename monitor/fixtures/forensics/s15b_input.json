@@ -1,0 +1,1215 @@
+{
+ "schema_version": 1,
+ "description": "S15B input: the 45 profitable meteora-dlmm+orca-whirlpool atomic arbitrages from the Scan B widened forensic sample, their 4 signers, and the 6 validated pool pairs. Captured read-only from mainnet; realized profit from balance deltas only.",
+ "source": "docs/forensic-widened-s15a.md + docs/forensic-route-recon-s15a.md",
+ "family": "meteora-dlmm+orca-whirlpool",
+ "window_hours": 53.41,
+ "slot_min": 434673538,
+ "slot_max": 435131694,
+ "total_net_profit_lamports": 651046648,
+ "signers": [
+  "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+  "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+  "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+  "HQWuDd7p5Re5rCHKe6JPB964fMvsKYyjJnpciFN6m6jD"
+ ],
+ "pairs": [
+  {
+   "meteora": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf",
+   "whirlpool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+  },
+  {
+   "meteora": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP",
+   "whirlpool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+  },
+  {
+   "meteora": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt",
+   "whirlpool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+  },
+  {
+   "meteora": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf",
+   "whirlpool": "Esvfxt3jMDdtTZqLF1fqRhDjzM8Bpr7fZxJMrK69PB7e"
+  },
+  {
+   "meteora": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt",
+   "whirlpool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+  },
+  {
+   "meteora": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP",
+   "whirlpool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+  }
+ ],
+ "transactions": [
+  {
+   "sig": "2xjgrYdkSW94wB4hgEgnnBZKifpUYn8xFvA72i2pbCSn1A2gkLmKsFkgpWAN228vkAzjLHewZPw9cjoA12ASTUMy",
+   "slot": 434673538,
+   "block_time": 1784792277,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 2458110,
+   "gross_profit_lamports": 2463926,
+   "fee": 5816,
+   "jito_tip": 0,
+   "compute_units": 341003,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "4yerRzDLCmorqErCCH98cFbcLTVWGbCC13ZWVsXZJTeSmmErw3svD1A48ejCRvWsrGNGbBC7xpHQjNwaoFPXX3JN",
+   "slot": 434676995,
+   "block_time": 1784793725,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 2077082,
+   "gross_profit_lamports": 2082086,
+   "fee": 5004,
+   "jito_tip": 0,
+   "compute_units": 325511,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AhhoxZDmsg2snm85vPjqzYzEYESoKfb4KmTj4HrBBNwY"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BmXVhzBHTawt5stWKBtFdjM8n33G5RoUDECE5FrRvayq"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5qGyUHsRQoX2V1CGXw4GktB6vgq6AHo9Ugxp6T7iiNph"
+    }
+   ]
+  },
+  {
+   "sig": "5Nm8y9mCXzrP33R4Hg9h7H7BACiogQFzJhXegwaFCEMp6MmNEnUzSsJp6eSpuSwyuLF9NSQ3JZ1QxCAaDiXGTPkj",
+   "slot": 434677293,
+   "block_time": 1784793849,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 2205113,
+   "gross_profit_lamports": 2210246,
+   "fee": 5133,
+   "jito_tip": 0,
+   "compute_units": 197365,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AU971DrPyhhrpRnmEBp5pDTWL2ny7nofb5vYBjDJkR2E"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "BuAe7hJtwXFa7K1DhRvfULk6eHZk6EVMN55DpiwBjuc3"
+    }
+   ]
+  },
+  {
+   "sig": "3Bx1TEH5aamvuM5rgTHN3AwpSVJhbY8vVUsfohQgmPzJLv8w4fJtttEYrUs7uQHVsAArrBwtsNu5CPZXe4bEo3Yv",
+   "slot": 434693067,
+   "block_time": 1784800469,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2501112,
+   "gross_profit_lamports": 2550830,
+   "fee": 49718,
+   "jito_tip": 0,
+   "compute_units": 319159,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "3WHDCR2DfL7yTyxW12h87inQQw4QWxse98ZUj6C9QnmyWm2wJsgL2udiALqWTfXWm3rwD2ZBGvirXZcvKDJeLyhv",
+   "slot": 434693894,
+   "block_time": 1784800819,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2551130,
+   "gross_profit_lamports": 2556133,
+   "fee": 5003,
+   "jito_tip": 0,
+   "compute_units": 846112,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AhhoxZDmsg2snm85vPjqzYzEYESoKfb4KmTj4HrBBNwY"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BmXVhzBHTawt5stWKBtFdjM8n33G5RoUDECE5FrRvayq"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5qGyUHsRQoX2V1CGXw4GktB6vgq6AHo9Ugxp6T7iiNph"
+    }
+   ]
+  },
+  {
+   "sig": "4229Y275V4FSWE9jxsDdeiH4d4K9dgFRUxzjNSPBpg2dpvXfZ3gheSUYLBC3V4bFm2fTpZkao35ch6wYjeNghvxD",
+   "slot": 434694357,
+   "block_time": 1784801016,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2554453,
+   "gross_profit_lamports": 2559672,
+   "fee": 5219,
+   "jito_tip": 0,
+   "compute_units": 300890,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4g9NkVnQ2tHeuWpCavYGmiizRFawwrsq8TFkB8adieDh"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AHTTzwf3GmVMJdxWM8v2MSxyjZj8rQR6hyAC3g9477Yj"
+    }
+   ]
+  },
+  {
+   "sig": "TPHBRExB9EfsocSyQdD1zgyrUEcDLR4huwk1aFLU7J1VvyfRbZnt9JAFSJrLz6d11j5ptp1AfNRmCYC9mEw35xj",
+   "slot": 434694828,
+   "block_time": 1784801212,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2552350,
+   "gross_profit_lamports": 2557524,
+   "fee": 5174,
+   "jito_tip": 0,
+   "compute_units": 260452,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4g9NkVnQ2tHeuWpCavYGmiizRFawwrsq8TFkB8adieDh"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AHTTzwf3GmVMJdxWM8v2MSxyjZj8rQR6hyAC3g9477Yj"
+    }
+   ]
+  },
+  {
+   "sig": "E1E42mpyK9Kkt83QHZYUKReafLAnFppaDdvnHSjS5boEjBf3kA1Azs7Tp51omTi53S421qAedSwQM9We9ugGBpw",
+   "slot": 434695301,
+   "block_time": 1784801408,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2553041,
+   "gross_profit_lamports": 2558046,
+   "fee": 5005,
+   "jito_tip": 0,
+   "compute_units": 395502,
+   "real_swap_hops": 4,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AhhoxZDmsg2snm85vPjqzYzEYESoKfb4KmTj4HrBBNwY"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "GDrzVCH6SXYpKrsSR1xymJisgsAvKLWkhk5yKNXDxsvB"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BmXVhzBHTawt5stWKBtFdjM8n33G5RoUDECE5FrRvayq"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5qGyUHsRQoX2V1CGXw4GktB6vgq6AHo9Ugxp6T7iiNph"
+    }
+   ]
+  },
+  {
+   "sig": "4LsSdSReqfhK7dCAHCnM2Ec9zb4pVSmkk6ZTYiuzbp9x8zuNLQ6zj4J399x8ptfmTa8B2qxq67AbEryRLEZ2Gq64",
+   "slot": 434696683,
+   "block_time": 1784801992,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2548913,
+   "gross_profit_lamports": 2554829,
+   "fee": 5916,
+   "jito_tip": 0,
+   "compute_units": 363492,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+    }
+   ]
+  },
+  {
+   "sig": "3SjhXZzt233BEq7L2czcbUpiR5jW86SzaUhUuSZN8Joa75nM92JgjLKaAdf3wUWtM9sdsDR9ofQp74wHpaoirjnp",
+   "slot": 434696972,
+   "block_time": 1784802112,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2405485,
+   "gross_profit_lamports": 2554975,
+   "fee": 149490,
+   "jito_tip": 0,
+   "compute_units": 347763,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    }
+   ]
+  },
+  {
+   "sig": "38NG5poLxGqUa4B1h2XKz4dtt7fotj2AKdjyQxJhXgm4R325dYtranmo93Sstgs6Y39wzVQXe2qvR1chwcg5x1EV",
+   "slot": 434697806,
+   "block_time": 1784802463,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2545245,
+   "gross_profit_lamports": 2550248,
+   "fee": 5003,
+   "jito_tip": 0,
+   "compute_units": 393191,
+   "real_swap_hops": 4,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "BVRbyLjjfSBcoyiYFuxbgKYnWuiFaF9CSXEa5vdSZ9Hh"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3SFQjmDsi5NsjJeZfz7fgJ6VddX3TcuZkv2eUibWJN8N"
+    }
+   ]
+  },
+  {
+   "sig": "5pAFXA4Ma2wGb64jZNhPAZqkZQEUtEVvg2sxgpCN6u9qQar45KfefwZBWqym4MuzhZiQceWtNrM4954esRWJ52vC",
+   "slot": 434874423,
+   "block_time": 1784876537,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 1498487,
+   "gross_profit_lamports": 1503544,
+   "fee": 5057,
+   "jito_tip": 0,
+   "compute_units": 193339,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "3ndjN1nJVUKGrJBc1hhVpER6kWTZKHdyDrPyCJyX3CXK"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4UopaeYzxPyHtSYcvb1Cj9U3Z8uUf3yngsrTExqi2JAh"
+    }
+   ]
+  },
+  {
+   "sig": "23U81VoFJ56Xea3gEejDbqPAnpANMP14wGetUZMS2vhuT1htWdQQjg6nnu9hUsPKVgfKhrEhjjwaFsbBHsW2EViU",
+   "slot": 434876126,
+   "block_time": 1784877248,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 2333120,
+   "gross_profit_lamports": 2338123,
+   "fee": 5003,
+   "jito_tip": 0,
+   "compute_units": 822124,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "CyrzGrL9U9x9FfqfQiTi7kWsvJ9mK97tGxtPF1AV8E8d"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BmXVhzBHTawt5stWKBtFdjM8n33G5RoUDECE5FrRvayq"
+    }
+   ]
+  },
+  {
+   "sig": "4CeGYYjc5TmieRBJTnhdv9LPxcgDz6XWJZ9Bp5ffCjYgQY4ctMPdJkYJTAvevkoSXxrvga6gRr62H482CGGCyzDw",
+   "slot": 434876967,
+   "block_time": 1784877604,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 995226,
+   "gross_profit_lamports": 1000229,
+   "fee": 5003,
+   "jito_tip": 0,
+   "compute_units": 769894,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AhhoxZDmsg2snm85vPjqzYzEYESoKfb4KmTj4HrBBNwY"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3xMzS52k5UjPrtogNrS4LxmJqPhSkrVF9JFhxYeRccnE"
+    }
+   ]
+  },
+  {
+   "sig": "3X5RKsvovp1WCuyY8JkxYfbCUZzy2DAPFCmoZZ73LEz6MmfFHRUYjGAtfsX743onxTgVMyn4nS35KH1FSiGideiu",
+   "slot": 434878737,
+   "block_time": 1784878349,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 1810642,
+   "gross_profit_lamports": 1815649,
+   "fee": 5007,
+   "jito_tip": 0,
+   "compute_units": 390198,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AhhoxZDmsg2snm85vPjqzYzEYESoKfb4KmTj4HrBBNwY"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3xMzS52k5UjPrtogNrS4LxmJqPhSkrVF9JFhxYeRccnE"
+    }
+   ]
+  },
+  {
+   "sig": "22CrEFR13zzPDpyvTFdUK8LuDAiRjrP6hVEvxYoE37K1AoxPkEbBV2YdARo2PXBqbfF96px71Z6vFogWJRyDS2SM",
+   "slot": 434878929,
+   "block_time": 1784878429,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 1912223,
+   "gross_profit_lamports": 1917628,
+   "fee": 5405,
+   "jito_tip": 0,
+   "compute_units": 303800,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4g9NkVnQ2tHeuWpCavYGmiizRFawwrsq8TFkB8adieDh"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AHTTzwf3GmVMJdxWM8v2MSxyjZj8rQR6hyAC3g9477Yj"
+    }
+   ]
+  },
+  {
+   "sig": "4ERb6oKt1882nqcGuV3drgX6orN1YcXTcWS4pX7g5fJL7BhELA4JgXxTdx7bjUV6K2W4oCAKfgv1oyTfPmmhDTVZ",
+   "slot": 434912996,
+   "block_time": 1784892715,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2619602,
+   "gross_profit_lamports": 2628675,
+   "fee": 9073,
+   "jito_tip": 0,
+   "compute_units": 353788,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "HcCbiQqc55uHtP2MJu7BYdVPi9s4j45R4zXcwRmJgCXX"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "2L47gbUzGsnJZqRzfny4b3VWvKBnMRTMeNH3uzFrj6ko"
+    }
+   ]
+  },
+  {
+   "sig": "2iyBgwEfaDtsvopFCN4M1YbRCznkWW32WSQgE4j3CVMS3rqYBz2py5XyW16f3RsmVhgk5JBAu1cFWoUpNT2A2HG6",
+   "slot": 434914024,
+   "block_time": 1784893148,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2627855,
+   "gross_profit_lamports": 2636673,
+   "fee": 8818,
+   "jito_tip": 0,
+   "compute_units": 439290,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AhhoxZDmsg2snm85vPjqzYzEYESoKfb4KmTj4HrBBNwY"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3xMzS52k5UjPrtogNrS4LxmJqPhSkrVF9JFhxYeRccnE"
+    }
+   ]
+  },
+  {
+   "sig": "2XYkHEg1Ey1AgLrLn2gWQnWE8Zh9N5aPDkWs8i1E2VMPr2rfNovqFurvAwmg9pw2JkNenrcucmv1N9cPp6XsVU6W",
+   "slot": 434914239,
+   "block_time": 1784893237,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2625733,
+   "gross_profit_lamports": 2634438,
+   "fee": 8705,
+   "jito_tip": 0,
+   "compute_units": 380621,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "2sf5NYcY4zUPXUSmG6f66mskb24t5F8S11pC1Nz5nQT3"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "2niqY1QYfZm3eDN5WyooaBca6M52XzdCDnwydPQGsuJ8CURrrF9EHiPXPLsSBwJZSj4cZqGgVLVWH7ARnVXaCVcX",
+   "slot": 434915185,
+   "block_time": 1784893635,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2634574,
+   "gross_profit_lamports": 2639575,
+   "fee": 5001,
+   "jito_tip": 0,
+   "compute_units": 331927,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5BoHD7DAHsGCA9D8eUkkZTgWTrnpad6G18MnTq3cUS86"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "21gTfxAnhUDjJGZJDkTXctGFKT8TeiXx6pN1CEg9K1uW"
+    }
+   ]
+  },
+  {
+   "sig": "22a1UgcCTDjAPmeHQ3LHXVdV2xn4B1MHiokzRBDM3vYTcd3xmypixTWk7DYdPhcZSLxGBveFkwcgqm6WzyJV34Le",
+   "slot": 434915236,
+   "block_time": 1784893655,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2639638,
+   "gross_profit_lamports": 2644941,
+   "fee": 5303,
+   "jito_tip": 0,
+   "compute_units": 252607,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "J5jzvT22u1Mt6de4gkBhEsTSTjBfYS7A6aF5jzu9ihkC"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4g9NkVnQ2tHeuWpCavYGmiizRFawwrsq8TFkB8adieDh"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AHTTzwf3GmVMJdxWM8v2MSxyjZj8rQR6hyAC3g9477Yj"
+    }
+   ]
+  },
+  {
+   "sig": "hGpk3C2WeqDL42a4StEQ3jeZck94HM6nVqvePy8ty65fGJg68iU5h8PC1QrSBgiU2ji3d4Q6EJKciVecZhCUYFL",
+   "slot": 434916012,
+   "block_time": 1784893982,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2635936,
+   "gross_profit_lamports": 2640937,
+   "fee": 5001,
+   "jito_tip": 0,
+   "compute_units": 387285,
+   "real_swap_hops": 5,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "2sf5NYcY4zUPXUSmG6f66mskb24t5F8S11pC1Nz5nQT3"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "qaxrwDiqVyreQW8nbQrLkjZERE2eFpm938AkHB4mbZZ8QmrQeCLwtcQC7kXq4TwBcyFiUZmLhqqwHrcMoNpyxux",
+   "slot": 434916134,
+   "block_time": 1784894034,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2634941,
+   "gross_profit_lamports": 2639942,
+   "fee": 5001,
+   "jito_tip": 0,
+   "compute_units": 357092,
+   "real_swap_hops": 4,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "2L47gbUzGsnJZqRzfny4b3VWvKBnMRTMeNH3uzFrj6ko"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "3Z4KNL6nvtpKKBQSdEht4kDtaqo1T8FcE8YdsgCcAGPdBrxQhbNdTmJKMNPUrpiWMf9k7YZQo953AtzWZSKvXXdc",
+   "slot": 434916252,
+   "block_time": 1784894084,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2634527,
+   "gross_profit_lamports": 2639528,
+   "fee": 5001,
+   "jito_tip": 0,
+   "compute_units": 184007,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    }
+   ]
+  },
+  {
+   "sig": "2m5Cez9Ldc5MEwAMo6vQNV9qVHxajYMySNHBmyS7E3z1o7hVv1Yb9JxV7Ww1hvUv7DGhP1ZwYZiG2DkipzrcpeTC",
+   "slot": 434916458,
+   "block_time": 1784894171,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2520092,
+   "gross_profit_lamports": 2640117,
+   "fee": 120025,
+   "jito_tip": 0,
+   "compute_units": 348888,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    }
+   ]
+  },
+  {
+   "sig": "2w96feVhmvcUZEH8524VPC9GFpf4vxPZL2GdXrucg7NfAcK6c2AAYN1EMwQwtHnGkUDywXabDK1fcFTCrKaPfLBe",
+   "slot": 434916754,
+   "block_time": 1784894298,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2637192,
+   "gross_profit_lamports": 2642193,
+   "fee": 5001,
+   "jito_tip": 0,
+   "compute_units": 201311,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "Esvfxt3jMDdtTZqLF1fqRhDjzM8Bpr7fZxJMrK69PB7e"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "5zFnJngrTLC34KpbdKqHbfaBZpfXjBPgq6CaPy37Q2CSfdAXDupyNZXTEFNs9SKfRUhNzcb5MxfdDqyBZkJDbwP2",
+   "slot": 434916790,
+   "block_time": 1784894313,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2630237,
+   "gross_profit_lamports": 2635936,
+   "fee": 5699,
+   "jito_tip": 0,
+   "compute_units": 368293,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "Mn241t4a8ubwPrnMKJzoM1FuoWc3AfHpjRbKpYQoaGTT5cP58LUYaG5JtauoBZoCVVFVVXhPCA4RokumqDHWFvE",
+   "slot": 434916858,
+   "block_time": 1784894343,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2636347,
+   "gross_profit_lamports": 2641758,
+   "fee": 5411,
+   "jito_tip": 0,
+   "compute_units": 383790,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FoSDw2L5DmTuQTFe55gWPDXf88euaxAEKFre74CnvQbX"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "4L2PgfR3FsqEriJWTXVjCv5iHRkfgVtUVJ4fjGEjba1GfuETqzSPreJN5r6qffXnktfRgkYVeoJAmSmT6P4aW17m",
+   "slot": 434917069,
+   "block_time": 1784894432,
+   "signer": "591jWVDk99tDsVev6dGvM5EgXLU8jPnihJswRpewoqj4",
+   "net_profit_lamports": 2641718,
+   "gross_profit_lamports": 2646720,
+   "fee": 5002,
+   "jito_tip": 0,
+   "compute_units": 830638,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 2,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AhhoxZDmsg2snm85vPjqzYzEYESoKfb4KmTj4HrBBNwY"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "CyrzGrL9U9x9FfqfQiTi7kWsvJ9mK97tGxtPF1AV8E8d"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BmXVhzBHTawt5stWKBtFdjM8n33G5RoUDECE5FrRvayq"
+    }
+   ]
+  },
+  {
+   "sig": "5BmVYFPugNaq5EqEDp2MeL6US3n5FusrxqGXbJD2UGPtqJoYBs95TCUKc7TY9F19mhqedBTtB5kgXVBN47Goa3ZP",
+   "slot": 434950028,
+   "block_time": 1784908268,
+   "signer": "HQWuDd7p5Re5rCHKe6JPB964fMvsKYyjJnpciFN6m6jD",
+   "net_profit_lamports": 9765170,
+   "gross_profit_lamports": 9770174,
+   "fee": 5004,
+   "jito_tip": 0,
+   "compute_units": 377327,
+   "real_swap_hops": 5,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FoSDw2L5DmTuQTFe55gWPDXf88euaxAEKFre74CnvQbX"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "4HppGTweoGQ8ZZ6UcCgwJKfi5mJD9Dqwy6htCpnbfBLW"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    }
+   ]
+  },
+  {
+   "sig": "38in9yGooVtyNWdhgkqwKWxbef7dQL27yU3Q47EPrCXaLZ7PMqSFAhnNp2UCxNb3bNu7LWnuov3K9qT1erdWsnbR",
+   "slot": 435027544,
+   "block_time": 1784940820,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 32264460,
+   "gross_profit_lamports": 32313096,
+   "fee": 48636,
+   "jito_tip": 0,
+   "compute_units": 154263,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "7eMnzvi48Nbz2yRaQrCWqfQ7awPNPfV3AboaejktyGMD"
+    }
+   ]
+  },
+  {
+   "sig": "3F9w88CQAZL5VvD5GzDZmFzkukMmPM2TP5pmyUXpLrjj8B9n3V8TD1rAKUzyzvzDfRqdA3ACHEuAwF37ZWaug1Hq",
+   "slot": 435033479,
+   "block_time": 1784943310,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 76984817,
+   "gross_profit_lamports": 76999307,
+   "fee": 14490,
+   "jito_tip": 0,
+   "compute_units": 631335,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "9sVQudtbw5vBVYgEhzrwdYnPXZFX6ZiprCi8eYjvwtM6"
+    }
+   ]
+  },
+  {
+   "sig": "636JD22RnFvRyxa8GxVCC3gNZCQiwb3Z32juYchkNqATabv93ytUEN7Lss7dAT7ShjSocn9NUHNtQFADpYxQGMv",
+   "slot": 435037357,
+   "block_time": 1784944935,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 65088705,
+   "gross_profit_lamports": 65146540,
+   "fee": 57835,
+   "jito_tip": 0,
+   "compute_units": 115635,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "FwewVm8u6tFPGewAyHmWAqad9hmF7mvqxK4mJ7iNqqGC"
+    }
+   ]
+  },
+  {
+   "sig": "3j6Ht5VfYSxSvRwBCMWVfwnCppryCcV2FarHTYBLcpG6QzUJrrxtfqLzpoNwh5tx4gk9rVb7nEUhtWmgBMWjeSNu",
+   "slot": 435038292,
+   "block_time": 1784945329,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 73976094,
+   "gross_profit_lamports": 73985713,
+   "fee": 9619,
+   "jito_tip": 0,
+   "compute_units": 121241,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AqJ5JYNb7ApkJwvbuXxPnTtKeuizjvC1s2fkp382y9LC"
+    }
+   ]
+  },
+  {
+   "sig": "4esn7rcXmhposnyeSFhiM9PStwFmUPQXjERtXh4nSHD6mqFPqAQCKFd7i7oNqqTvmxfutf4C2hDn4jpdPUuKiLCG",
+   "slot": 435040919,
+   "block_time": 1784946432,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 44390291,
+   "gross_profit_lamports": 44416632,
+   "fee": 26341,
+   "jito_tip": 0,
+   "compute_units": 173915,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "Ckp1kwZqosaLU1h3zWtuaMBubyWM7LX3cxYezRVin7p2"
+    }
+   ]
+  },
+  {
+   "sig": "5rWoeQyChRP3A65Jn8is6CWkVtqn39Egzu2r8UEEBFViCGEREzW4y9B6ic3QpgouZpceaxwQfouct5wwzr2F5pCK",
+   "slot": 435045585,
+   "block_time": 1784948404,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 55656202,
+   "gross_profit_lamports": 55661202,
+   "fee": 5000,
+   "jito_tip": 0,
+   "compute_units": 139705,
+   "real_swap_hops": 4,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "6NUiVmsNjsi4AfsMsEiaezsaV9N4N1ZrD4jEnuWNRvyb"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "G7ixPyiyNeggVf1VanSetFMNbVuVCPtimJmd9axfQqng"
+    }
+   ]
+  },
+  {
+   "sig": "5At2heW3h3S3Jtm4tsWgg3Qk1aiQpVzdyYbxTobNcxPuZBaXu43m4ndYPgmpRp9s73SfyEuq5BygdawKZaBteNCb",
+   "slot": 435049550,
+   "block_time": 1784950068,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 69617265,
+   "gross_profit_lamports": 69722265,
+   "fee": 105000,
+   "jito_tip": 0,
+   "compute_units": 171893,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "CeaZcxBNLpJWtxzt58qQmfMBtJY8pQLvursXTJYGQpbN"
+    }
+   ]
+  },
+  {
+   "sig": "RPnAZCkhXLfgSCav3FpYaEJ9FCzPsyyizH4H7Pz3AGGmgDbwEsojVBTq3BTkWr1wxKUusGCkMcK6F7hd6sAjo51",
+   "slot": 435052651,
+   "block_time": 1784951377,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 78626933,
+   "gross_profit_lamports": 78631938,
+   "fee": 5005,
+   "jito_tip": 0,
+   "compute_units": 150224,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "Ckp1kwZqosaLU1h3zWtuaMBubyWM7LX3cxYezRVin7p2"
+    }
+   ]
+  },
+  {
+   "sig": "2b5YYtKvhnvwiBjwXggsmYbCtCpSwqfpLD2kjmNUjvySveFandyfq1QNLRGwsGzQSQbW9ETvzChvU4xFiBt6Qp3k",
+   "slot": 435065173,
+   "block_time": 1784956634,
+   "signer": "Bq23RjEhEUAwyDqE4kVpzknHqS6SDnRnfPrGgT3GmdRC",
+   "net_profit_lamports": 22979061,
+   "gross_profit_lamports": 23084061,
+   "fee": 105000,
+   "jito_tip": 0,
+   "compute_units": 134337,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "jupiter-v6",
+     "pool": null
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4Ew1DZc6u1p7j5FwBXdkdn9hSdpVA79Kb3EhiVsnKFbe"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "Ckp1kwZqosaLU1h3zWtuaMBubyWM7LX3cxYezRVin7p2"
+    }
+   ]
+  },
+  {
+   "sig": "4AmTivm8dQtTYBEKkcbQVYGsh7GoqsbduxQ1EL6wgMToyMjJGFf9NYvUCw9bvdtHjg54D7ZJywMhwPtPTH9kbrr7",
+   "slot": 435128040,
+   "block_time": 1784983003,
+   "signer": "2bLXQjWtquMkvRv8vM4vejUXcEAXRuLw4VPnoKGMiRiB",
+   "net_profit_lamports": 2959682,
+   "gross_profit_lamports": 2964704,
+   "fee": 5022,
+   "jito_tip": 0,
+   "compute_units": 305561,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4g9NkVnQ2tHeuWpCavYGmiizRFawwrsq8TFkB8adieDh"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AHTTzwf3GmVMJdxWM8v2MSxyjZj8rQR6hyAC3g9477Yj"
+    }
+   ]
+  },
+  {
+   "sig": "4LhqnSnHZCgLi1HterHtsxJByWbqwNjPNaVNve4qS9vs1VHvhGSbhvdpowFaf3Wr65YeEEWMshTC66V6TdqBgx7x",
+   "slot": 435131127,
+   "block_time": 1784984299,
+   "signer": "HQWuDd7p5Re5rCHKe6JPB964fMvsKYyjJnpciFN6m6jD",
+   "net_profit_lamports": 9762452,
+   "gross_profit_lamports": 9915643,
+   "fee": 153191,
+   "jito_tip": 0,
+   "compute_units": 387253,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "5KTk2eUJyatm31kuVrtKhoVEjJqpnvbAXzuAHLyBqbob9rhsygWqakaRwDVXfXNaFSMnHLtwYVzbjfkwWWZ3U9NN",
+   "slot": 435131151,
+   "block_time": 1784984309,
+   "signer": "HQWuDd7p5Re5rCHKe6JPB964fMvsKYyjJnpciFN6m6jD",
+   "net_profit_lamports": 9747693,
+   "gross_profit_lamports": 9918407,
+   "fee": 170714,
+   "jito_tip": 0,
+   "compute_units": 359997,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "orca-whirlpool",
+     "pool": "BSddxwYW73as8852ZTHRH13pbZEmZ96NBjayc5mSVtkZ"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "3PyikuArxqoiMbEzvXjqSop7i87puGPxGWDEj8PmthFf"
+    }
+   ]
+  },
+  {
+   "sig": "A8DBHKp6jwQeaTDPwEw1gs1oBoHWr5tN68sQKXkUb5xrYpQuXVV2KhoWdszZwezjPtU9Z26TKnsyPXb4wq8xwiX",
+   "slot": 435131182,
+   "block_time": 1784984322,
+   "signer": "HQWuDd7p5Re5rCHKe6JPB964fMvsKYyjJnpciFN6m6jD",
+   "net_profit_lamports": 9893102,
+   "gross_profit_lamports": 9933320,
+   "fee": 40218,
+   "jito_tip": 0,
+   "compute_units": 342189,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "FbkX1h2YTs171cEMa4GrV7XbAiQt5zSmV2CjfYWxXJDP"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+    }
+   ]
+  },
+  {
+   "sig": "5DzCbsaRRxxppZNVXpUiN6amKPoKyur7z1p1NmBAxCv8EoHGvMEJ6ACx2AZBXd9XPTxWfqutmYS8NTWdr2xxH52s",
+   "slot": 435131624,
+   "block_time": 1784984507,
+   "signer": "HQWuDd7p5Re5rCHKe6JPB964fMvsKYyjJnpciFN6m6jD",
+   "net_profit_lamports": 9783509,
+   "gross_profit_lamports": 9926367,
+   "fee": 142858,
+   "jito_tip": 0,
+   "compute_units": 492446,
+   "real_swap_hops": 3,
+   "distinct_non_wsol_mints": 1,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "5XRqv7LCoC5FhWKk5JN8n4kCrJs3e4KH1XsYzKeMd5Nt"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "83v8iPyZihDEjDdY8RdZddyZNyUtXngz69Lgo9Kt5d6d"
+    },
+    {
+     "venue": "meteora-dlmm",
+     "pool": "2L47gbUzGsnJZqRzfny4b3VWvKBnMRTMeNH3uzFrj6ko"
+    }
+   ]
+  },
+  {
+   "sig": "3XKvY9jc73ZocViRzgdXtPr5ag2uajXPZ1A3N3h9BtrFWXAb16ozVRk5uJseKqbXrqAqEhhoUjtuFTB6Dye5LPxb",
+   "slot": 435131694,
+   "block_time": 1784984539,
+   "signer": "HQWuDd7p5Re5rCHKe6JPB964fMvsKYyjJnpciFN6m6jD",
+   "net_profit_lamports": 9931088,
+   "gross_profit_lamports": 9936133,
+   "fee": 5045,
+   "jito_tip": 0,
+   "compute_units": 316288,
+   "real_swap_hops": 2,
+   "distinct_non_wsol_mints": 3,
+   "pools": [
+    {
+     "venue": "meteora-dlmm",
+     "pool": "4g9NkVnQ2tHeuWpCavYGmiizRFawwrsq8TFkB8adieDh"
+    },
+    {
+     "venue": "orca-whirlpool",
+     "pool": "AHTTzwf3GmVMJdxWM8v2MSxyjZj8rQR6hyAC3g9477Yj"
+    }
+   ]
+  }
+ ]
+}
