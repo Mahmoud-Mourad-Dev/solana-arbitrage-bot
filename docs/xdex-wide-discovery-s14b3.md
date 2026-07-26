@@ -70,10 +70,13 @@ candidates appear. **None appeared → no narrow config was created.**
 
 ## Decision (spec §10)
 
-Zero gross-positive candidates across the expanded ~1,093-token universe (40
-validated routes, 5 sweeps):
+Zero gross-positive candidates across the **selected 40 validated routes drawn
+from the 1,093-token safe universe** (5 sweeps). Only those 40 routes were
+quoted — this is NOT a measurement of all 1,093 tokens, and must not be cited
+as one:
 
-**`ARCHIVE METEORA ↔ WHIRLPOOL STRATEGY`**
+**`ARCHIVE METEORA ↔ WHIRLPOOL STRATEGY UNDER THE CURRENT TESTED MARKET
+SELECTION`**
 
 This is an economic rejection, not a technical failure. The discovery pipeline,
 mint-safety filter, single-tick clamp, shared route engine, and provenance
