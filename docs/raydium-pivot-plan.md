@@ -181,3 +181,26 @@ blocked. Recommended next step: re-open Meteora↔Whirlpool as a **read-only**
 observe slice with corrected pool selection (all fee tiers) and a major-asset
 allowlist, to measure opportunity frequency, size and decay — the three things
 still unknown.
+
+### S15A corrected measurement (COMPLETE)
+
+Full evidence: `docs/xdex-corrected-measurement-s15a.md`.
+
+Fixed all three selection errors (USDC allowlist; all fee tiers per pair; major
+assets iterated first) and then measured the SIX exact pool pairs the profitable
+operators trade, via a new `observe-xdex --pairs` mode that bypasses discovery
+entirely.
+
+**125 valid polls @ 2 s: 0/125 gross-positive; best edge −2,073 lamports.**
+The same pools produced +2,500,000 lamports MEDIAN realized profit for three
+operators over 53 h. A ~1,000× gap between what a poller sees and what is earned.
+
+**Conclusion: polling cannot measure this opportunity class.** The dislocation
+exists for a fraction of a slot after a swap lands. The strategy is real; the
+instrument was wrong. This also corrects my Phase-0 pushback on the director's
+"sub-slot" diagnosis — they were more right than I credited.
+
+Next (read-only, no build): point the EXISTING event-driven engine
+(`monitor/src/pipeline.rs`, Geyser processed → mark_dirty → synchronous
+run_search) at these six pools and measure detection frequency, edge size, and
+slots-to-decay. Raydium CLMM remains closed; Phases 1–8 remain blocked.

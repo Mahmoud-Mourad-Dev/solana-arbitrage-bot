@@ -368,11 +368,11 @@ fn recon_one(rpc: &RpcClient, sig_s: &str) -> std::result::Result<ReconTx, Strin
     let mut pool_lookup: Vec<(usize, Vec<String>)> = Vec::new();
 
     let push_hop = |ix: &serde_json::Value,
-                        location: String,
-                        depth: u8,
-                        hops: &mut Vec<Hop>,
-                        venues: &mut BTreeSet<String>,
-                        pool_lookup: &mut Vec<(usize, Vec<String>)>| {
+                    location: String,
+                    depth: u8,
+                    hops: &mut Vec<Hop>,
+                    venues: &mut BTreeSet<String>,
+                    pool_lookup: &mut Vec<(usize, Vec<String>)>| {
         let Some(pid) = ix["programId"].as_str() else {
             return;
         };

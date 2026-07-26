@@ -98,6 +98,72 @@ fn discover(rpc: &RpcClient) -> Result<Vec<XRoute>> {
     Ok(out)
 }
 
+/// S15A: build routes from EXPLICIT `meteora:whirlpool` pool pairs, bypassing
+/// all discovery ranking. Used to measure the exact pools that observed
+/// profitable operators trade (see docs/forensic-route-recon-s15a.md) without
+/// any selection heuristic in the way.
+fn routes_from_pairs(rpc: &RpcClient, pairs: &[String]) -> Result<Vec<XRoute>> {
+    let wsol = pk(WSOL);
+    let mut out = Vec::new();
+    for spec in pairs {
+        let Some((m, w)) = spec.split_once(':') else {
+            println!("  bad pair spec {spec} (want meteora:whirlpool)");
+            continue;
+        };
+        let (Ok(mk), Ok(wk)) = (Pubkey::from_str(m.trim()), Pubkey::from_str(w.trim())) else {
+            println!("  bad pubkey in {spec}");
+            continue;
+        };
+        let (Ok(ma), Ok(wa)) = (rpc.get_account(&mk), rpc.get_account(&wk)) else {
+            println!("  fetch failed for {spec}");
+            continue;
+        };
+        let Ok(pair) = decode_lb_pair(&ma.data) else {
+            println!("  meteora decode failed {m}");
+            continue;
+        };
+        let Some(d) = arb_monitor::parsers::decode_whirlpool(&wa.data) else {
+            println!("  whirlpool decode failed {w}");
+            continue;
+        };
+        // Both venues must share exactly {WSOL, token}.
+        let msides = [pair.token_x_mint, pair.token_y_mint];
+        let wsides = [d.token_mint_a, d.token_mint_b];
+        let Some(token) = msides.iter().find(|x| **x != wsol).copied() else {
+            println!("  {spec}: meteora pair has no non-WSOL side");
+            continue;
+        };
+        if !msides.contains(&wsol) || !wsides.contains(&wsol) || !wsides.contains(&token) {
+            println!("  {spec}: venues do not share {{WSOL, token}}");
+            continue;
+        }
+        println!(
+            "  pair OK: meteora {} (bin_step {}) x whirlpool {} (ts {}, fee {}ppm) token {}",
+            &m[..8],
+            pair.bin_step,
+            &w[..8],
+            d.tick_spacing,
+            d.fee_rate_ppm,
+            &token.to_string()[..8]
+        );
+        out.push(XRoute {
+            token,
+            meteora_pair: mk,
+            dlmm_bv: pair.reserve_x,
+            dlmm_qv: pair.reserve_y,
+            whirlpool: wk,
+            wp_vault_a: d.token_vault_a,
+            wp_vault_b: d.token_vault_b,
+            wp_mint_a: d.token_mint_a,
+            wp_mint_b: d.token_mint_b,
+        });
+    }
+    if out.is_empty() {
+        bail!("no valid explicit pairs");
+    }
+    Ok(out)
+}
+
 /// A candidate pool on one venue, keyed later by its non-WSOL token.
 struct MetCand {
     pair: Pubkey,
@@ -124,6 +190,7 @@ struct WhpCand {
 fn discover_wide(
     rpc: &RpcClient,
     max_routes: usize,
+    per_venue: usize,
 ) -> Result<(Vec<XRoute>, BTreeMap<String, usize>, String)> {
     let wsol = pk(WSOL);
     let mut reject: BTreeMap<String, usize> = BTreeMap::new();
@@ -219,7 +286,11 @@ fn discover_wide(
             bump("mint_missing");
             continue;
         };
-        match arb_monitor::mint_safety::screen_mint(&acc.owner.to_string(), &acc.data) {
+        match arb_monitor::mint_safety::screen_mint_for_trading(
+            &t.to_string(),
+            &acc.owner.to_string(),
+            &acc.data,
+        ) {
             Ok(()) => safe_tokens.push(*t),
             Err(e) => bump(&format!("mint:{e:?}").replace(char::is_whitespace, "")),
         }
@@ -249,6 +320,26 @@ fn discover_wide(
         .collect();
     const MIN_WSOL: u64 = 2_000_000_000; // 2 SOL executable depth on each leg
 
+    // S15A fix 2b: iterate MAJOR ASSETS FIRST. `safe_tokens` holds ~1000 mints
+    // and the loop stops at `max_routes`, so an arbitrary iteration order can
+    // exhaust the cap before ever reaching USDC/USDT — which is exactly where
+    // the observed profitable arbitrage lives. Deepest-WSOL-side first within
+    // the remainder.
+    let mut safe_tokens = safe_tokens.clone();
+    safe_tokens.sort_by_key(|t| {
+        let major = arb_monitor::mint_safety::major_asset(&t.to_string()).is_some();
+        let depth: u64 = met_by_token
+            .get(t)
+            .map(|v| {
+                v.iter()
+                    .map(|m| bal.get(&m.wsol_vault).copied().unwrap_or(0))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        (!major, std::cmp::Reverse(depth))
+    });
+
     let mut routes: Vec<XRoute> = Vec::new();
     for t in &safe_tokens {
         let mut mets: Vec<&MetCand> = met_by_token[t]
@@ -268,8 +359,13 @@ fn discover_wide(
             bump("whirlpool_thin");
         }
         // Combinations: top-2 × top-2 per token (not only the single deepest).
-        for m in mets.iter().take(2) {
-            for w in whps.iter().take(2) {
+        // S15A fix 2: enumerate ALL fee tiers / tick spacings per pair, not just
+        // the deepest pool. The observed profitable arbitrage runs BETWEEN fee
+        // tiers of the same pair (Orca ts 1 / ts 2 / ts 32896 against Meteora),
+        // so ranking by depth and keeping the top pool structurally removed the
+        // only routes with an edge — see docs/forensic-route-recon-s15a.md.
+        for m in mets.iter().take(per_venue) {
+            for w in whps.iter().take(per_venue) {
                 routes.push(XRoute {
                     token: *t,
                     meteora_pair: m.pair,
@@ -634,12 +730,27 @@ fn main() -> Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(50);
-    let routes = if wide {
+    // How many pools PER VENUE per token to combine. S15A fix 2: the profitable
+    // arbitrage runs between fee tiers of the same pair, so this must be > 1.
+    let per_venue: usize = std::env::var("XDEX_POOLS_PER_VENUE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(6);
+    let explicit: Option<Vec<String>> = args
+        .iter()
+        .position(|a| a == "--pairs")
+        .and_then(|i| args.get(i + 1))
+        .map(|v| v.split(',').map(str::to_string).collect());
+    let routes = if let Some(pairs) = explicit {
+        println!("=== S15A EXPLICIT-PAIR measurement (quote-only, single-tick clamped) ===");
+        println!("measuring {} operator-observed pool pairs…", pairs.len());
+        routes_from_pairs(&rpc, &pairs)?
+    } else if wide {
         println!(
             "=== S14B-3 WIDE Meteora↔Whirlpool discovery (quote-only, single-tick clamped) ==="
         );
         println!("enumerating all WSOL-paired pools on both venues…");
-        let (routes, reject, stats) = discover_wide(&rpc, max_routes)?;
+        let (routes, reject, stats) = discover_wide(&rpc, max_routes, per_venue)?;
         println!("  {stats}");
         println!("  rejections (typed): {reject:?}");
         if routes.is_empty() {
