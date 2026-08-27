@@ -102,3 +102,11 @@ path = "src/bin/forensic_route_recon.rs"
 [[bin]]
 name = "forensics-s15b"
 path = "src/bin/forensics_s15b.rs"
+
+[[bin]]
+name = "discover-venue-pairs"
+path = "src/bin/discover_venue_pairs.rs"
+
+[[bin]]
+name = "forensics-batch"
+path = "src/bin/forensics_batch.rs"

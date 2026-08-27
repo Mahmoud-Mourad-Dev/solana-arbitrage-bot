@@ -14,6 +14,7 @@ pub mod config;
 pub mod consistency;
 pub mod discovery;
 pub mod fixture_capture;
+pub mod forensics;
 pub mod geyser;
 pub mod market_discovery;
 pub mod math;
