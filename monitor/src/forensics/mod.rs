@@ -13,6 +13,7 @@
 //! - Silent pagination truncation is a hard error (`CensusError::Truncated`):
 //!   it was one of the three measurement errors S15B caught in itself.
 
+pub mod campaign;
 pub mod pipeline;
 pub mod price;
 pub mod schema;

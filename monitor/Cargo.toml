@@ -110,3 +110,7 @@ path = "src/bin/discover_venue_pairs.rs"
 [[bin]]
 name = "forensics-batch"
 path = "src/bin/forensics_batch.rs"
+
+[[bin]]
+name = "observe-campaign"
+path = "src/bin/observe_campaign.rs"

@@ -1,0 +1,25 @@
+[Unit]
+Description=meteora-dlmm x pump-amm persistence campaign (Prompt O, observe-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust WorkingDirectory and User to the VPS checkout / account.
+WorkingDirectory=/opt/solana-arbitrage-bot
+User=arb
+# RPC_ENDPOINT must be set here or in the EnvironmentFile. ARMING VARS MUST
+# NOT be present: the binary aborts loudly if ENABLE_SUBMIT / ENABLE_JITO /
+# MODE!=observe / any .live-armed marker is found.
+EnvironmentFile=/opt/solana-arbitrage-bot/.env
+ExecStart=/opt/solana-arbitrage-bot/target/release/observe-campaign run
+# Resume logic makes restarts safe: completed sweeps are skipped, never redone.
+Restart=on-failure
+RestartSec=60
+# Cap the journal so a 48h run cannot fill the disk; the JSONL is the source
+# of truth, not the log.
+StandardOutput=append:/opt/solana-arbitrage-bot/reports/observe-campaign.log
+StandardError=append:/opt/solana-arbitrage-bot/reports/observe-campaign.log
+
+[Install]
+WantedBy=multi-user.target
