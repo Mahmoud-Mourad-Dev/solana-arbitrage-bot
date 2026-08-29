@@ -35,12 +35,21 @@ pub const MAX_SQRT_PRICE_X64: u128 = 79_226_673_515_401_279_992_447_579_055;
 pub const WHIRLPOOL_SWAP_DISCRIMINATOR: [u8; 8] = [248, 198, 158, 145, 225, 117, 135, 200];
 /// Raydium AMM v4 SwapBaseIn single-byte discriminator.
 pub const RAYDIUM_SWAP_BASE_IN_TAG: u8 = 9;
+/// Meteora DLMM `swap2` discriminator. Source of truth:
+/// `monitor/src/meteora_reconstruct.rs::SWAP2_DISCRIMINATOR` and
+/// `monitor/fixtures/meteora/swap2_cpi_fixtures.json` ("414b3f4ceb5b5b88"),
+/// captured from live mainnet CPIs and byte-exact-verified in Slice 5.
+/// A monitor-side test guards this constant against that source.
+pub const METEORA_SWAP2_DISCRIMINATOR: [u8; 8] = [0x41, 0x4b, 0x3f, 0x4c, 0xeb, 0x5b, 0x5b, 0x88];
 
 /// Program ids as raw bytes-agnostic base58 strings (each crate converts to
 /// its own Pubkey/Address type; keeping strings avoids a Solana dependency).
 pub const RAYDIUM_V4_PROGRAM_STR: &str = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 pub const WHIRLPOOL_PROGRAM_STR: &str = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 pub const TOKEN_PROGRAM_STR: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+/// Source of truth: `monitor/src/meteora_dlmm.rs::DLMM_PROGRAM_ID` (mainnet
+/// program behind the 6/6 live-exact quote parity); guarded by a monitor test.
+pub const METEORA_DLMM_PROGRAM_STR: &str = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo";
 
 /// Base58-decoded program ids. These are the on-chain source of truth (the
 /// Pinocchio program builds its `Address` constants from them, avoiding a
@@ -57,6 +66,10 @@ pub const WHIRLPOOL_PROGRAM_ID: [u8; 32] = [
 pub const TOKEN_PROGRAM_ID: [u8; 32] = [
     6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237,
     95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+];
+pub const METEORA_DLMM_PROGRAM_ID: [u8; 32] = [
+    4, 233, 225, 47, 188, 132, 232, 38, 201, 50, 204, 233, 226, 100, 12, 206, 21, 89, 12, 28, 98,
+    115, 176, 146, 87, 8, 186, 59, 133, 32, 176, 188,
 ];
 
 /// Stable custom error codes surfaced as `ProgramError::Custom(code)`.
@@ -114,6 +127,8 @@ pub enum DexKind {
     RaydiumV4 = 0,
     #[cfg_attr(feature = "serde", serde(rename = "orca-whirlpool"))]
     OrcaWhirlpool = 1,
+    #[cfg_attr(feature = "serde", serde(rename = "meteora-dlmm"))]
+    MeteoraDlmm = 2,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,6 +174,7 @@ pub fn parse_instruction(data: &[u8]) -> Result<IxParams, ArbError> {
         let dex = match data[o] {
             0 => DexKind::RaydiumV4,
             1 => DexKind::OrcaWhirlpool,
+            2 => DexKind::MeteoraDlmm,
             _ => return Err(ArbError::UnknownDex),
         };
         let num_accounts = data[o + 1];
@@ -221,6 +237,22 @@ pub fn build_whirlpool_swap_data(amount_in: u64, min_amount_out: u64, a_to_b: bo
     data.extend_from_slice(&sqrt_price_limit.to_le_bytes());
     data.push(1); // amount_specified_is_input = true (exact-in)
     data.push(a_to_b as u8);
+    data
+}
+
+/// Meteora DLMM `swap2`: discriminator + amount_in + min_amount_out +
+/// empty `remaining_accounts_info` (`00000000`). The traversed bin arrays are
+/// passed as trailing CPI accounts, not encoded in the data — which is why
+/// DLMM's variable account count fits the existing per-hop `num_accounts: u8`
+/// without any wire-format change (see `dlmm_hop_fits_existing_wire_format`).
+/// Format source: `monitor/fixtures/meteora/swap2_cpi_fixtures.json`
+/// (`disc(8)|amount_in:u64|min_amount_out:u64|remaining_accounts_info`).
+pub fn build_meteora_swap_data(amount_in: u64, min_amount_out: u64) -> Vec<u8> {
+    let mut data = Vec::with_capacity(28);
+    data.extend_from_slice(&METEORA_SWAP2_DISCRIMINATOR);
+    data.extend_from_slice(&amount_in.to_le_bytes());
+    data.extend_from_slice(&min_amount_out.to_le_bytes());
+    data.extend_from_slice(&[0, 0, 0, 0]); // remaining_accounts_info: empty vec
     data
 }
 
@@ -316,7 +348,8 @@ mod tests {
     }
 
     /// ABI freeze: error codes and layout constants must never drift —
-    /// executors match on Custom(code) for landed-tx forensics.
+    /// executors match on Custom(code) for landed-tx forensics. Adding
+    /// MeteoraDlmm=2 is strictly additive; HEADER_LEN/HOP_LEN are unchanged.
     #[test]
     fn abi_frozen() {
         assert_eq!(HEADER_LEN, 17);
@@ -328,6 +361,53 @@ mod tests {
         assert_eq!(ArbError::ZeroAmount as u32, 10);
         assert_eq!(DexKind::RaydiumV4 as u8, 0);
         assert_eq!(DexKind::OrcaWhirlpool as u8, 1);
+        assert_eq!(DexKind::MeteoraDlmm as u8, 2);
+    }
+
+    #[test]
+    fn meteora_swap_data_layout() {
+        let d = build_meteora_swap_data(123, 456);
+        assert_eq!(d.len(), 28);
+        assert_eq!(&d[0..8], &METEORA_SWAP2_DISCRIMINATOR);
+        assert_eq!(u64::from_le_bytes(d[8..16].try_into().unwrap()), 123);
+        assert_eq!(u64::from_le_bytes(d[16..24].try_into().unwrap()), 456);
+        assert_eq!(&d[24..28], &[0, 0, 0, 0], "empty remaining_accounts_info");
+    }
+
+    /// Mixed 2-hop route (MeteoraDlmm → OrcaWhirlpool) round-trips through
+    /// the UNCHANGED wire format. A real DLMM hop slice is
+    /// [dlmm_program + 16 fixed accounts + N bin arrays]; with the captured
+    /// maximum of 3 bin arrays that is 20 accounts — comfortably u8, so no
+    /// ABI widening is needed (the point of this test).
+    #[test]
+    fn dlmm_hop_fits_existing_wire_format() {
+        let params = IxParams {
+            amount_in: 500_000_000,
+            min_profit: 100_000,
+            hops: vec![
+                HopParams {
+                    dex: DexKind::MeteoraDlmm,
+                    num_accounts: 20, // program + 16 fixed + 3 bin arrays
+                    source_index: 5,  // user_token_in at swap2 index 4, +1 for program at 0
+                    a_to_b: false,    // unused for DLMM (direction is implied by token accounts)
+                    min_amount_out: 42_000_000,
+                },
+                HopParams {
+                    dex: DexKind::OrcaWhirlpool,
+                    num_accounts: 12,
+                    source_index: 4,
+                    a_to_b: true,
+                    min_amount_out: 500_100_000,
+                },
+            ],
+        };
+        let encoded = encode_instruction(&params);
+        assert_eq!(
+            encoded.len(),
+            HEADER_LEN + 2 * HOP_LEN,
+            "wire format unchanged"
+        );
+        assert_eq!(parse_instruction(&encoded).unwrap(), params);
     }
 
     /// The hardcoded on-chain program-id bytes MUST equal the base58 ids.
@@ -345,6 +425,10 @@ mod tests {
             bs58::decode(TOKEN_PROGRAM_STR).into_vec().unwrap(),
             TOKEN_PROGRAM_ID
         );
+        assert_eq!(
+            bs58::decode(METEORA_DLMM_PROGRAM_STR).into_vec().unwrap(),
+            METEORA_DLMM_PROGRAM_ID
+        );
     }
 
     #[cfg(feature = "serde")]
@@ -357,6 +441,10 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<DexKind>("\"orca-whirlpool\"").unwrap(),
             DexKind::OrcaWhirlpool
+        );
+        assert_eq!(
+            serde_json::from_str::<DexKind>("\"meteora-dlmm\"").unwrap(),
+            DexKind::MeteoraDlmm
         );
     }
 }

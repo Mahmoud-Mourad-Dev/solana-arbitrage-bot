@@ -9,9 +9,13 @@ default = ["std", "serde"]
 std = []
 # serde (opportunity JSON) is an off-chain concern and pulls in std.
 serde = ["dep:serde", "std"]
+# off-chain-only DLMM PDA helpers; pulls solana-pubkey (with the curve feature
+# needed by find_program_address). NEVER enabled by the on-chain program.
+pda = ["dep:solana-pubkey", "std"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
+solana-pubkey = { version = "2.1", optional = true, default-features = false, features = ["curve25519"] }
 
 [dev-dependencies]
 serde_json = "1"

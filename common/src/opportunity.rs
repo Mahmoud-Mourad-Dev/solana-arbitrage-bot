@@ -36,6 +36,12 @@ pub struct OpportunityHop {
     pub expected_amount_out: u64,
     #[serde(with = "string_u64")]
     pub min_amount_out: u64,
+    /// DLMM bin-array indices this hop's quote actually traversed, in
+    /// traversal order. EMPTY for Raydium/Whirlpool. For MeteoraDlmm this must
+    /// come from the same quote that produced the route so the resolved
+    /// accounts and the quoted output can never disagree (prompt B4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin_arrays: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

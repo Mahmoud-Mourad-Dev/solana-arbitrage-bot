@@ -5,7 +5,7 @@ edition = "2021"
 description = "Rust price monitor / cycle discovery (migration of the TypeScript src/). Phase B: Geyser stream, parsers, registry, discovery engine, Redis publisher."
 
 [dependencies]
-arb-common = { path = "../common" }
+arb-common = { path = "../common", features = ["pda"] }
 ruint = "1"
 anyhow = "1"
 thiserror = "1"

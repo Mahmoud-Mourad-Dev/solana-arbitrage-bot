@@ -19,5 +19,10 @@ pub mod cost;
 pub mod ix;
 pub mod mode;
 
+/// Off-chain DLMM PDA derivations (feature `pda`). The single shared
+/// definition used by both monitor and executor.
+#[cfg(feature = "pda")]
+pub mod dlmm_pda;
+
 #[cfg(feature = "serde")]
 pub mod opportunity;

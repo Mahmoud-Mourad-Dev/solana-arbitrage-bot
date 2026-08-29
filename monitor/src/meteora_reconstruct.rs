@@ -504,3 +504,30 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod abi_source_guard {
+    //! `arb_common::ix` mirrors the DLMM constants whose source of truth lives
+    //! in THIS crate (captured + byte-exact-verified against mainnet). These
+    //! tests are the guard the arb-common doc comments promise.
+    #[test]
+    fn common_swap2_discriminator_matches_source_of_truth() {
+        assert_eq!(
+            arb_common::ix::METEORA_SWAP2_DISCRIMINATOR,
+            super::SWAP2_DISCRIMINATOR
+        );
+        let fx = super::load();
+        assert_eq!(
+            fx.swap2_discriminator, "414b3f4ceb5b5b88",
+            "fixture drifted"
+        );
+    }
+
+    #[test]
+    fn common_dlmm_program_id_matches_source_of_truth() {
+        assert_eq!(
+            arb_common::ix::METEORA_DLMM_PROGRAM_STR,
+            crate::meteora_dlmm::DLMM_PROGRAM_ID
+        );
+    }
+}

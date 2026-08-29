@@ -265,6 +265,7 @@ dependencies = [
  "bs58",
  "serde",
  "serde_json",
+ "solana-pubkey 2.4.0",
 ]
 
 [[package]]

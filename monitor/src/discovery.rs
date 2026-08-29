@@ -290,6 +290,7 @@ impl DiscoveryEngine {
                 amount_in: amount,
                 expected_amount_out: out,
                 min_amount_out: (out as u128 * (10_000 - cfg.slippage_bps as u128) / 10_000) as u64,
+                bin_arrays: Vec::new(),
             });
             amount = out;
         }

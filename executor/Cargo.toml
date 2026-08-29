@@ -5,7 +5,7 @@ edition = "2021"
 description = "Off-chain execution bot: Redis opportunity listener -> Jito bundle submitter"
 
 [dependencies]
-arb-common = { path = "../common" }
+arb-common = { path = "../common", features = ["pda"] }
 base64 = "0.22"
 anyhow = "1"
 thiserror = "1"

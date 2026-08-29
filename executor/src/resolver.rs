@@ -17,14 +17,20 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use arb_common::ix::{DexKind, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID, WHIRLPOOL_PROGRAM_ID};
+use arb_common::dlmm_pda::{bin_array_pda, bitmap_extension_pda, dlmm_oracle, event_authority};
+use arb_common::ix::{
+    DexKind, METEORA_DLMM_PROGRAM_ID, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID, WHIRLPOOL_PROGRAM_ID,
+};
 use arb_common::opportunity::OpportunityHop;
 
 // Program ids as solana Pubkeys, built from arb-common's canonical bytes
 // (the same source of truth the on-chain program uses).
 pub const RAYDIUM_V4_PROGRAM: Pubkey = Pubkey::new_from_array(RAYDIUM_V4_PROGRAM_ID);
 pub const WHIRLPOOL_PROGRAM: Pubkey = Pubkey::new_from_array(WHIRLPOOL_PROGRAM_ID);
+pub const METEORA_DLMM_PROGRAM: Pubkey = Pubkey::new_from_array(METEORA_DLMM_PROGRAM_ID);
 pub const TOKEN_PROGRAM: Pubkey = Pubkey::new_from_array(TOKEN_PROGRAM_ID);
+pub const TOKEN_2022_PROGRAM: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+pub const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 
 pub const ATA_PROGRAM: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 pub const WSOL_MINT: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
@@ -33,11 +39,15 @@ pub const TICK_ARRAY_SIZE: i32 = 88;
 const RAYDIUM_ACCOUNT_LEN: usize = 752;
 const WHIRLPOOL_ACCOUNT_LEN: usize = 653;
 const MARKET_ACCOUNT_LEN: usize = 388;
+const DLMM_LB_PAIR_MIN_LEN: usize = 904;
 
 /// index (within the hop slice, program at 0) of the user source account.
 pub const RAYDIUM_SOURCE_INDEX: u8 = 16;
 pub const WHIRLPOOL_SOURCE_INDEX_A: u8 = 4;
 pub const WHIRLPOOL_SOURCE_INDEX_B: u8 = 6;
+/// DLMM swap2 `userTokenIn` sits at CPI index 4 → hop-slice index 5 (program
+/// occupies slot 0). Verified against `swap2_cpi_fixtures.json`.
+pub const METEORA_SOURCE_INDEX: u8 = 5;
 
 pub fn derive_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(
@@ -49,6 +59,15 @@ pub fn derive_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
 
 fn read_pubkey(data: &[u8], offset: usize) -> Pubkey {
     Pubkey::new_from_array(data[offset..offset + 32].try_into().unwrap())
+}
+
+/// DLMM stores a per-mint flag: 1 ⇒ Token-2022, else classic Token program.
+fn token_program_for(flag: u8) -> Pubkey {
+    if flag == 1 {
+        TOKEN_2022_PROGRAM
+    } else {
+        TOKEN_PROGRAM
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +88,21 @@ pub struct RaydiumKeys {
     pub market_base_vault: Pubkey,
     pub market_quote_vault: Pubkey,
     pub vault_signer: Pubkey,
+}
+
+#[derive(Debug, Clone)]
+pub struct MeteoraDlmmKeys {
+    pub lb_pair: Pubkey,
+    pub reserve_x: Pubkey,
+    pub reserve_y: Pubkey,
+    pub mint_x: Pubkey,
+    pub mint_y: Pubkey,
+    pub token_x_program: Pubkey,
+    pub token_y_program: Pubkey,
+    pub oracle: Pubkey,
+    pub bitmap_extension: Pubkey,
+    pub active_id: i32,
+    pub fetched_at: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +133,7 @@ pub struct Resolver {
     owner: Pubkey,
     raydium_cache: Mutex<HashMap<Pubkey, Arc<RaydiumKeys>>>,
     whirlpool_cache: Mutex<HashMap<Pubkey, Arc<WhirlpoolKeys>>>,
+    dlmm_cache: Mutex<HashMap<Pubkey, Arc<MeteoraDlmmKeys>>>,
     whirlpool_ttl: Duration,
 }
 
@@ -109,6 +144,7 @@ impl Resolver {
             owner,
             raydium_cache: Mutex::new(HashMap::new()),
             whirlpool_cache: Mutex::new(HashMap::new()),
+            dlmm_cache: Mutex::new(HashMap::new()),
             whirlpool_ttl,
         }
     }
@@ -124,6 +160,10 @@ impl Resolver {
                 let k = self.whirlpool_keys(pool).await?;
                 Ok((k.mint_a, k.mint_b))
             }
+            DexKind::MeteoraDlmm => {
+                let k = self.dlmm_keys(pool).await?;
+                Ok((k.mint_x, k.mint_y))
+            }
         }
     }
 
@@ -138,6 +178,10 @@ impl Resolver {
             DexKind::OrcaWhirlpool => {
                 let keys = self.whirlpool_keys(pool).await?;
                 self.whirlpool_hop(&keys, input_mint, hop.min_amount_out)
+            }
+            DexKind::MeteoraDlmm => {
+                let keys = self.dlmm_keys(pool).await?;
+                self.dlmm_hop(&keys, input_mint, hop.min_amount_out, &hop.bin_arrays)
             }
         }
     }
@@ -254,6 +298,131 @@ impl Resolver {
             metas,
             source_index: RAYDIUM_SOURCE_INDEX,
             a_to_b: false, // unused for raydium
+            min_amount_out,
+        })
+    }
+
+    // ── Meteora DLMM ──────────────────────────────────────────────────────────
+
+    async fn dlmm_keys(&self, pool: Pubkey) -> Result<Arc<MeteoraDlmmKeys>> {
+        if let Some(k) = self.dlmm_cache.lock().await.get(&pool) {
+            // Only the metadata (mints, reserves, token programs, oracle) is
+            // cached; active_id drifts but is not used to pick bin arrays
+            // (those come from the quote). TTL bounds staleness anyway.
+            if k.fetched_at.elapsed() < self.whirlpool_ttl {
+                return Ok(k.clone());
+            }
+        }
+        let data = self
+            .rpc
+            .get_account_data(&pool)
+            .await
+            .with_context(|| format!("fetch dlmm lb_pair {pool}"))?;
+        if data.len() < DLMM_LB_PAIR_MIN_LEN {
+            bail!("{pool} is not a DLMM lb_pair (len={})", data.len());
+        }
+        // Offsets verified in monitor/src/meteora_dlmm.rs (6/6 live-exact).
+        let active_id = i32::from_le_bytes(data[76..80].try_into().unwrap());
+        let mint_x = read_pubkey(&data, 88);
+        let mint_y = read_pubkey(&data, 120);
+        let reserve_x = read_pubkey(&data, 152);
+        let reserve_y = read_pubkey(&data, 184);
+        let token_x_program = token_program_for(data[880]);
+        let token_y_program = token_program_for(data[881]);
+        let oracle = dlmm_oracle(&METEORA_DLMM_PROGRAM, &pool);
+        let bitmap_extension = bitmap_extension_pda(&METEORA_DLMM_PROGRAM, &pool);
+
+        let keys = Arc::new(MeteoraDlmmKeys {
+            lb_pair: pool,
+            reserve_x,
+            reserve_y,
+            mint_x,
+            mint_y,
+            token_x_program,
+            token_y_program,
+            oracle,
+            bitmap_extension,
+            active_id,
+            fetched_at: Instant::now(),
+        });
+        self.dlmm_cache.lock().await.insert(pool, keys.clone());
+        Ok(keys)
+    }
+
+    /// Build the DLMM `swap2` hop slice. Account order is the IDL order,
+    /// verified byte-for-byte against `swap2_cpi_fixtures.json`:
+    ///
+    /// ```text
+    /// 0  lb_pair (w)                 8  oracle (w)
+    /// 1  bitmap_extension | program  9  host_fee_in = program (None)
+    /// 2  reserve_x (w)              10  user (authority, signer)
+    /// 3  reserve_y (w)             11  token_x_program
+    /// 4  user_token_in (w)         12  token_y_program
+    /// 5  user_token_out (w)        13  memo program
+    /// 6  token_x_mint              14  event_authority
+    /// 7  token_y_mint              15  dlmm program (self)
+    /// 16.. bin arrays (w), in traversal order
+    /// ```
+    ///
+    /// `bin_array_indices` MUST come from the quote that produced the route.
+    /// If empty this returns an error rather than guessing a set that could
+    /// disagree with the quoted output.
+    fn dlmm_hop(
+        &self,
+        k: &MeteoraDlmmKeys,
+        input_mint: Pubkey,
+        min_amount_out: u64,
+        bin_array_indices: &[i64],
+    ) -> Result<ResolvedHop> {
+        if input_mint != k.mint_x && input_mint != k.mint_y {
+            bail!("input mint {input_mint} not in dlmm pool {}", k.lb_pair);
+        }
+        if bin_array_indices.is_empty() {
+            bail!(
+                "DLMM hop on {} has no bin-array set — it must be carried from the \
+                 quote (OpportunityHop.bin_arrays); refusing to guess",
+                k.lb_pair
+            );
+        }
+        // userTokenIn is the ATA of the input mint; userTokenOut the other.
+        let user_x = derive_ata(&self.owner, &k.mint_x);
+        let user_y = derive_ata(&self.owner, &k.mint_y);
+        let (user_in, user_out) = if input_mint == k.mint_x {
+            (user_x, user_y)
+        } else {
+            (user_y, user_x)
+        };
+
+        let mut metas = vec![
+            AccountMeta::new_readonly(METEORA_DLMM_PROGRAM, false), // hop program at [0]
+            AccountMeta::new(k.lb_pair, false),                     // 0 lb_pair
+            AccountMeta::new(k.bitmap_extension, false),            // 1 bitmap ext
+            AccountMeta::new(k.reserve_x, false),                   // 2 reserve_x
+            AccountMeta::new(k.reserve_y, false),                   // 3 reserve_y
+            AccountMeta::new(user_in, false),                       // 4 user_token_in
+            AccountMeta::new(user_out, false),                      // 5 user_token_out
+            AccountMeta::new_readonly(k.mint_x, false),             // 6 token_x_mint
+            AccountMeta::new_readonly(k.mint_y, false),             // 7 token_y_mint
+            AccountMeta::new(k.oracle, false),                      // 8 oracle
+            AccountMeta::new_readonly(METEORA_DLMM_PROGRAM, false), // 9 host_fee_in = None
+            AccountMeta::new_readonly(self.owner, true),            // 10 user (signer)
+            AccountMeta::new_readonly(k.token_x_program, false),    // 11 token_x_program
+            AccountMeta::new_readonly(k.token_y_program, false),    // 12 token_y_program
+            AccountMeta::new_readonly(MEMO_PROGRAM, false),         // 13 memo
+            AccountMeta::new_readonly(event_authority(&METEORA_DLMM_PROGRAM), false), // 14
+            AccountMeta::new_readonly(METEORA_DLMM_PROGRAM, false), // 15 program (self)
+        ];
+        for &idx in bin_array_indices {
+            metas.push(AccountMeta::new(
+                bin_array_pda(&METEORA_DLMM_PROGRAM, &k.lb_pair, idx),
+                false,
+            ));
+        }
+        Ok(ResolvedHop {
+            dex: DexKind::MeteoraDlmm,
+            metas,
+            source_index: METEORA_SOURCE_INDEX,
+            a_to_b: input_mint == k.mint_x, // recorded; direction is implied by the token accounts
             min_amount_out,
         })
     }
@@ -401,6 +570,102 @@ mod tests {
         assert_eq!(down[0], up[0]);
         assert_ne!(down[1], up[1]);
         assert_eq!(down.len(), 3);
+    }
+
+    fn dlmm_keys_fixture() -> MeteoraDlmmKeys {
+        MeteoraDlmmKeys {
+            lb_pair: Pubkey::new_unique(),
+            reserve_x: Pubkey::new_unique(),
+            reserve_y: Pubkey::new_unique(),
+            mint_x: Pubkey::new_unique(),
+            mint_y: WSOL_MINT,
+            token_x_program: TOKEN_2022_PROGRAM,
+            token_y_program: TOKEN_PROGRAM,
+            oracle: Pubkey::new_unique(),
+            bitmap_extension: Pubkey::new_unique(),
+            active_id: 100,
+            fetched_at: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn dlmm_hop_account_order_matches_swap2_idl() {
+        let r = Resolver::new(
+            // no RPC calls in dlmm_hop; a dummy client is fine
+            Arc::new(RpcClient::new("http://localhost:8899".into())),
+            Pubkey::new_unique(),
+            Duration::from_secs(30),
+        );
+        let k = dlmm_keys_fixture();
+        let hop = r
+            .dlmm_hop(&k, k.mint_x, 42, &[0, 1])
+            .expect("dlmm hop builds");
+        // program at [0], then the 16 fixed IDL accounts, then 2 bin arrays.
+        assert_eq!(hop.metas.len(), 1 + 16 + 2);
+        assert_eq!(hop.metas[0].pubkey, METEORA_DLMM_PROGRAM);
+        assert_eq!(hop.metas[1].pubkey, k.lb_pair);
+        assert_eq!(hop.metas[3].pubkey, k.reserve_x);
+        // userTokenIn (index 5) is the input-mint ATA; source_index points at it.
+        assert_eq!(hop.metas[5].pubkey, derive_ata(&r.owner, &k.mint_x));
+        assert_eq!(hop.metas[6].pubkey, derive_ata(&r.owner, &k.mint_y));
+        assert_eq!(hop.source_index, METEORA_SOURCE_INDEX);
+        assert_eq!(
+            hop.metas[METEORA_SOURCE_INDEX as usize].pubkey,
+            hop.metas[5].pubkey
+        );
+        // user authority at [11] is the only signer, and writable-none of the
+        // fixed readonly programs got marked writable.
+        assert!(hop.metas[11].is_signer);
+        assert_eq!(hop.metas[11].pubkey, r.owner);
+        assert_eq!(hop.metas[12].pubkey, TOKEN_2022_PROGRAM); // token_x_program
+        assert_eq!(hop.metas[13].pubkey, TOKEN_PROGRAM); // token_y_program
+        assert_eq!(hop.metas[14].pubkey, MEMO_PROGRAM); // memo
+        assert_eq!(hop.metas[15].pubkey, event_authority(&METEORA_DLMM_PROGRAM));
+        assert_eq!(hop.metas[16].pubkey, METEORA_DLMM_PROGRAM); // program self
+                                                                // host_fee_in (index 10) is the program-id None sentinel.
+        assert_eq!(hop.metas[10].pubkey, METEORA_DLMM_PROGRAM);
+        // first bin array follows the 17 fixed slots.
+        assert_eq!(
+            hop.metas[17].pubkey,
+            bin_array_pda(&METEORA_DLMM_PROGRAM, &k.lb_pair, 0)
+        );
+    }
+
+    #[test]
+    fn dlmm_hop_reverses_token_accounts_when_input_is_y() {
+        let r = Resolver::new(
+            Arc::new(RpcClient::new("http://localhost:8899".into())),
+            Pubkey::new_unique(),
+            Duration::from_secs(30),
+        );
+        let k = dlmm_keys_fixture();
+        let hop = r.dlmm_hop(&k, k.mint_y, 1, &[0]).unwrap();
+        // input = y ⇒ userTokenIn is the y ATA, userTokenOut the x ATA.
+        assert_eq!(hop.metas[5].pubkey, derive_ata(&r.owner, &k.mint_y));
+        assert_eq!(hop.metas[6].pubkey, derive_ata(&r.owner, &k.mint_x));
+    }
+
+    #[test]
+    fn dlmm_hop_refuses_empty_bin_arrays() {
+        let r = Resolver::new(
+            Arc::new(RpcClient::new("http://localhost:8899".into())),
+            Pubkey::new_unique(),
+            Duration::from_secs(30),
+        );
+        let k = dlmm_keys_fixture();
+        // The quote must supply the traversed set; guessing is refused.
+        assert!(r.dlmm_hop(&k, k.mint_x, 1, &[]).is_err());
+    }
+
+    #[test]
+    fn dlmm_hop_rejects_foreign_input_mint() {
+        let r = Resolver::new(
+            Arc::new(RpcClient::new("http://localhost:8899".into())),
+            Pubkey::new_unique(),
+            Duration::from_secs(30),
+        );
+        let k = dlmm_keys_fixture();
+        assert!(r.dlmm_hop(&k, Pubkey::new_unique(), 1, &[0]).is_err());
     }
 
     #[test]

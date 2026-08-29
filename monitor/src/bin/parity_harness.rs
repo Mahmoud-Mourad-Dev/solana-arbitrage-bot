@@ -166,6 +166,7 @@ fn normalize(opp: &arb_common::opportunity::Opportunity) -> Value {
                 "dex": match h.dex {
                     arb_common::ix::DexKind::RaydiumV4 => "raydium-v4",
                     arb_common::ix::DexKind::OrcaWhirlpool => "orca-whirlpool",
+                    arb_common::ix::DexKind::MeteoraDlmm => "meteora-dlmm",
                 },
                 "inputMint": h.input_mint,
                 "outputMint": h.output_mint,

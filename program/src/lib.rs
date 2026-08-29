@@ -36,8 +36,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use arb_common::ix::{
-    build_raydium_swap_data, build_whirlpool_swap_data, parse_instruction, ArbError, DexKind,
-    RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID, WHIRLPOOL_PROGRAM_ID,
+    build_meteora_swap_data, build_raydium_swap_data, build_whirlpool_swap_data, parse_instruction,
+    ArbError, DexKind, METEORA_DLMM_PROGRAM_ID, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    WHIRLPOOL_PROGRAM_ID,
 };
 use pinocchio::account::AccountView;
 use pinocchio::address::Address;
@@ -49,6 +50,7 @@ use pinocchio::instruction::{InstructionAccount, InstructionView};
 // truth, base58-guarded there) — no base58 decoder needed on-chain.
 pub const RAYDIUM_V4_PROGRAM: Address = Address::new_from_array(RAYDIUM_V4_PROGRAM_ID);
 pub const WHIRLPOOL_PROGRAM: Address = Address::new_from_array(WHIRLPOOL_PROGRAM_ID);
+pub const METEORA_DLMM_PROGRAM: Address = Address::new_from_array(METEORA_DLMM_PROGRAM_ID);
 pub const TOKEN_PROGRAM: Address = Address::new_from_array(TOKEN_PROGRAM_ID);
 
 // On-chain entrypoint only. We install the pieces explicitly rather than via
@@ -137,6 +139,7 @@ pub fn process_instruction(
         let expected = match hop.dex {
             DexKind::RaydiumV4 => &RAYDIUM_V4_PROGRAM,
             DexKind::OrcaWhirlpool => &WHIRLPOOL_PROGRAM,
+            DexKind::MeteoraDlmm => &METEORA_DLMM_PROGRAM,
         };
         if dex_program.address() != expected || !dex_program.executable() {
             return Err(err(ArbError::InvalidDexProgram));
@@ -158,6 +161,7 @@ pub fn process_instruction(
             DexKind::OrcaWhirlpool => {
                 build_whirlpool_swap_data(amount_in, hop.min_amount_out, hop.a_to_b)
             }
+            DexKind::MeteoraDlmm => build_meteora_swap_data(amount_in, hop.min_amount_out),
         };
 
         // Privileges inherited verbatim from the outer transaction.
@@ -176,6 +180,29 @@ pub fn process_instruction(
             accounts: &metas,
         };
         invoke_signed_with_slice(&ix, cpi_accounts, no_signers)?;
+
+        // INTERMEDIATE-MINIMUM CHECK (gap-analysis §F).
+        //
+        // The final profit check alone lets an intermediate leg be sandwiched
+        // to near-zero and still pass if the final base balance happens to
+        // clear. We enforce each non-final hop's `min_amount_out` on-chain,
+        // against the account the NEXT hop will sweep (its source) — which is
+        // exactly where this hop's output landed. This does NOT trust the
+        // DEX's own slippage guard: it re-reads the SPL balance after the CPI.
+        if hop_index + 1 < params.hops.len() {
+            let next = &params.hops[hop_index + 1];
+            // next hop's slice begins at the running cursor.
+            let next_slice = hop_accounts
+                .get(cursor..cursor + next.num_accounts as usize)
+                .ok_or(err(ArbError::AccountSliceOutOfBounds))?;
+            let intermediate = next_slice
+                .get(next.source_index as usize)
+                .ok_or(err(ArbError::AccountSliceOutOfBounds))?;
+            let got = token_amount(intermediate)?;
+            if got < hop.min_amount_out {
+                return Err(err(ArbError::ProfitNotMet));
+            }
+        }
     }
     if cursor != hop_accounts.len() {
         // Trailing unconsumed accounts signal a malformed client — refuse.

@@ -105,30 +105,30 @@ pub fn dlmm_program() -> Pubkey {
     Pubkey::from_str(crate::meteora_dlmm::DLMM_PROGRAM_ID).unwrap()
 }
 
+// DLMM PDA derivations now live ONCE in `arb_common::dlmm_pda` (shared with the
+// executor). These thin wrappers keep the monitor's existing call sites and
+// bind the program id, so there is a single definition of the seeds.
+
 /// DLMM per-pair oracle PDA (verified: matches the pair's stored oracle).
 pub fn dlmm_oracle(pair: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[b"oracle", pair.as_ref()], &dlmm_program()).0
+    arb_common::dlmm_pda::dlmm_oracle(&dlmm_program(), pair)
 }
 
 /// Anchor `__event_authority` PDA of a program.
 pub fn event_authority(program: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[b"__event_authority"], program).0
+    arb_common::dlmm_pda::event_authority(program)
 }
 
 /// DLMM `bin_array_bitmap_extension` PDA (seed `["bitmap", lb_pair]`). This is
 /// the optional account passed at swap2 index [1]; when a pool has no extension
 /// Anchor substitutes the program id as a None sentinel instead.
 pub fn bitmap_extension_pda(pair: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[b"bitmap", pair.as_ref()], &dlmm_program()).0
+    arb_common::dlmm_pda::bitmap_extension_pda(&dlmm_program(), pair)
 }
 
 /// Bin-array PDA (same derivation used by the observe tools).
 pub fn bin_array_pda(pair: &Pubkey, index: i64) -> Pubkey {
-    Pubkey::find_program_address(
-        &[b"bin_array", pair.as_ref(), &index.to_le_bytes()],
-        &dlmm_program(),
-    )
-    .0
+    arb_common::dlmm_pda::bin_array_pda(&dlmm_program(), pair, index)
 }
 
 // ─────────────────────── Pump PDAs (evidence-validated) ───────────────────────

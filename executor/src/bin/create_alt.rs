@@ -97,6 +97,7 @@ async fn main() -> Result<()> {
                 amount_in: 0,
                 expected_amount_out: 0,
                 min_amount_out: 0,
+                bin_arrays: Vec::new(),
             };
             let resolved = resolver.resolve_hop(&hop).await?;
             for meta in &resolved.metas {
