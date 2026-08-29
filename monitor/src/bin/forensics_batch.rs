@@ -205,6 +205,21 @@ fn main() -> Result<()> {
                 outcomes.push((name, None));
             }
         }
+        // Crash-safety: a batch can run for an hour against a rate-limited
+        // endpoint; losing every completed input to a network drop at the end
+        // is unacceptable. Each finished input lands in the progress file
+        // immediately (row + full outcome), so a killed run keeps its work.
+        if let Some((n, o)) = outcomes.last() {
+            let line = serde_json::json!({"row": rows.last(), "input": n, "outcome": o});
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("reports/forensics-batch-progress.jsonl")
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "{line}");
+            }
+        }
     }
 
     // Rank: BUILD first, then INVESTIGATE, by usd/month desc.

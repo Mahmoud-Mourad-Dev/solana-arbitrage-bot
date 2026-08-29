@@ -185,6 +185,17 @@ pub struct TxAccounting {
     /// Native SOL delta on the signer's system account (post - pre). Includes
     /// the fee, so downstream P&L is already net of it.
     pub d_sol: i128,
+    /// Native SOL contributed to this transaction by accounts that are NOT
+    /// the signer and NOT token accounts — the operator topping up trade
+    /// capital from a co-owned wallet or a program-owned vault mid-tx.
+    ///
+    /// Booking these inflows as profit is the S15A accounting error in a
+    /// subtler form: on the sampled top-85 events of the first batch run,
+    /// 11/85 were PURE capital transfers (strict value = exactly -fee) and
+    /// the aggregate top-end overstatement was 14.9%. Arb revenue reaches the
+    /// signer exclusively through pool-vault token outflows, so external
+    /// native inflows are excluded from value P&L.
+    pub external_native_inflow: i128,
     /// Signer-owned SPL balance deltas by mint (post - pre), token units.
     pub deltas: BTreeMap<String, i128>,
 }
@@ -201,6 +212,29 @@ pub fn account_tx(sig: &str, v: &serde_json::Value) -> Option<TxAccounting> {
     let pre = meta["preBalances"].as_array()?;
     let post = meta["postBalances"].as_array()?;
     let d_sol = post.get(signer_idx)?.as_i64()? as i128 - pre.get(signer_idx)?.as_i64()? as i128;
+    // Indices that carry SPL token balances (vaults, ATAs, fee collectors) —
+    // their native movements are rent/wrapping mechanics, not capital inflows.
+    let mut token_idx: BTreeSet<usize> = BTreeSet::new();
+    for arr in [
+        meta["preTokenBalances"].as_array(),
+        meta["postTokenBalances"].as_array(),
+    ] {
+        for b in arr.unwrap_or(&Vec::new()) {
+            if let Some(i) = b["accountIndex"].as_u64() {
+                token_idx.insert(i as usize);
+            }
+        }
+    }
+    let mut external_native_inflow: i128 = 0;
+    for (j, (a, b)) in pre.iter().zip(post.iter()).enumerate() {
+        if j == signer_idx || token_idx.contains(&j) {
+            continue;
+        }
+        let (a, b) = (a.as_i64()? as i128, b.as_i64()? as i128);
+        if a > b {
+            external_native_inflow += a - b;
+        }
+    }
     let mut deltas: BTreeMap<String, i128> = BTreeMap::new();
     for (arr, sign) in [
         (meta["preTokenBalances"].as_array(), -1i128),
@@ -222,6 +256,7 @@ pub fn account_tx(sig: &str, v: &serde_json::Value) -> Option<TxAccounting> {
         signer: signer.to_string(),
         fee: meta["fee"].as_u64().unwrap_or(0),
         d_sol,
+        external_native_inflow,
         deltas,
     })
 }
@@ -271,12 +306,16 @@ pub fn classify_value(acct: &TxAccounting, quote_mint: &str, price: Option<&Pric
     if has_other {
         return Pnl::Unpriceable;
     }
+    // STRICT: capital moved in from the operator's other accounts is not
+    // revenue. Subtracting it makes a pure consolidation transfer read as
+    // exactly -fee instead of a fake win (see external_native_inflow docs).
+    let d_sol = acct.d_sol - acct.external_native_inflow;
     if quote_mint == WSOL_MINT || d_quote == 0 {
         // Inventory-neutral cycle: value is exactly the SOL delta.
-        return Pnl::Priced(acct.d_sol + d_wsol);
+        return Pnl::Priced(d_sol + d_wsol);
     }
     match price {
-        Some(p) => Pnl::Priced(value_pnl(acct.d_sol, d_wsol, d_quote, p)),
+        Some(p) => Pnl::Priced(value_pnl(d_sol, d_wsol, d_quote, p)),
         None => Pnl::Unpriceable,
     }
 }
@@ -1087,7 +1126,36 @@ mod tests {
             signer: "S".into(),
             fee: 5000,
             d_sol,
+            external_native_inflow: 0,
             deltas: deltas.iter().map(|(m, d)| (m.to_string(), *d)).collect(),
+        }
+    }
+
+    /// REGRESSION — the exact on-chain numbers from `3Ph3HGfiauYz…`
+    /// (meteora-dlmm+pump-amm CTPoyCwk market): the signer gained 391,073,819
+    /// lamports, of which 57,406,080 came from a non-token account
+    /// (`CxCuYh6Q…`, the operator's own capital) — true arb value is
+    /// 333,667,739 (== pool-vault WSOL outflow minus router fees).
+    #[test]
+    fn external_capital_inflow_is_not_arb_profit() {
+        let mut a = acct(391_073_819, &[]);
+        a.external_native_inflow = 57_406_080;
+        assert_eq!(
+            classify_value(&a, WSOL_MINT, None),
+            Pnl::Priced(333_667_739)
+        );
+    }
+
+    /// A PURE consolidation transfer (one of 11/85 found in the first batch
+    /// run, e.g. `63X4P3BRzA…`: naive +564,406, inflow 569,438) must read as
+    /// exactly the fee paid — never as a win.
+    #[test]
+    fn pure_capital_transfer_reads_as_minus_fee() {
+        let mut a = acct(564_406, &[]);
+        a.external_native_inflow = 569_438;
+        match classify_value(&a, WSOL_MINT, None) {
+            Pnl::Priced(v) => assert_eq!(v, -5_032, "strict value must be -fee"),
+            _ => panic!("priceable"),
         }
     }
 
