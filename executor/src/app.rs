@@ -190,15 +190,9 @@ impl App {
             lookup_tables: &self.lookup_tables,
         })?;
 
-        // 7) Submission gate: real submits require MODE=live (armed) AND
-        //    DRY_RUN=false AND ENABLE_SUBMIT=true AND ENABLE_JITO=true AND
-        //    STRATEGY=raydium-dual (Phase 0 fourth gate — an old .env cannot
-        //    arm the new path). Any other mode simulates and never sends.
-        let submit_armed = self.cfg.mode.allows_live_submission()
-            && !self.cfg.dry_run
-            && self.cfg.enable_submit
-            && self.cfg.enable_jito
-            && self.cfg.strategy_armed();
+        // 7) Submission gate: real submits require every arming precondition
+        //    (see `submission_armed`). Any other mode simulates and never sends.
+        let submit_armed = self.submission_armed();
         if !submit_armed {
             let sim = self.rpc.simulate_transaction(&tx).await?;
             info!(
@@ -239,8 +233,28 @@ impl App {
         Ok(())
     }
 
+    /// The complete arming condition — the SINGLE definition, used by both the
+    /// bundle-submission gate and the ATA-setup gate so neither can send a
+    /// real transaction while the other believes it is disarmed. Live mode AND
+    /// not dry-run AND ENABLE_SUBMIT AND ENABLE_JITO AND the STRATEGY gate.
+    fn submission_armed(&self) -> bool {
+        self.cfg.mode.allows_live_submission()
+            && !self.cfg.dry_run
+            && self.cfg.enable_submit
+            && self.cfg.enable_jito
+            && self.cfg.strategy_armed()
+    }
+
     /// Guarantee the payer's ATA for `mint` exists (idempotent, once per mint
     /// per run). Swaps land into these accounts; a missing one reverts.
+    ///
+    /// SAFETY (Prompt T Part 2): ATA creation is the ONLY raw-transaction send
+    /// in the executor (the arbitrage itself is Jito-bundle-only, by
+    /// construction — `handle_opportunity` calls `jito.send_bundle` and has no
+    /// raw path). This raw send is gated on the full arming condition: in
+    /// Observe/Simulate/dry-run it does NOT send — it records intent and
+    /// returns. So a disarmed process sends nothing, ever. If the raw path is
+    /// somehow reached while disarmed, it aborts hard rather than sending.
     async fn ensure_ata(&self, mint: &Pubkey) -> Result<()> {
         if self.atas_ready.lock().await.contains_key(mint) {
             return Ok(());
@@ -248,7 +262,25 @@ impl App {
         let owner = self.payer.pubkey();
         let ata = derive_ata(&owner, mint);
         if self.rpc.get_account(&ata).await.is_err() {
-            info!(%mint, %ata, "creating missing ATA");
+            if !self.submission_armed() {
+                info!(
+                    %mint, %ata,
+                    "OBSERVE/SIMULATE: would create missing ATA (no real tx sent — disarmed)"
+                );
+                // Do NOT mark ready: leave the fact recorded that the ATA is
+                // absent, and never send. Simulation may fail for want of the
+                // ATA; that is a logged simulation outcome, not a real send.
+                return Ok(());
+            }
+            // Hard guard: raw submission is only ever reachable when fully
+            // armed. This assert makes the raw path impossible to reach
+            // otherwise, per the Part 2 requirement (abort, not a config
+            // default).
+            assert!(
+                self.submission_armed(),
+                "raw ATA submission reached while disarmed — refusing to send"
+            );
+            info!(%mint, %ata, "creating missing ATA (armed)");
             let ix = create_ata_idempotent_ix(&owner, &owner, mint);
             let blockhash = self.rpc.get_latest_blockhash().await?;
             let tx =

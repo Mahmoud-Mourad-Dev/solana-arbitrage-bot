@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust price monitor / cycle discovery (migration of the TypeScript src/). Phase B: Geyser stream, parsers, registry, discovery engine, Redis publisher."
 
+[features]
+# Off by default: the quarantined forensics/discovery/campaign tooling
+# (Prompt T Part 2). The default build produces only the surviving minimal
+# path (arb-monitor pipeline). Rebuild tooling with `--features legacy-tooling`.
+default = []
+legacy-tooling = []
+
 [dependencies]
 arb-common = { path = "../common", features = ["pda"] }
 ruint = "1"
@@ -38,79 +45,99 @@ path = "src/main.rs"
 [[bin]]
 name = "preview"
 path = "src/bin/preview.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "discover-pools"
 path = "src/bin/discover_pools.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "parity_harness"
 path = "src/bin/parity_harness.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "dlmm_quote_cli"
 path = "src/bin/dlmm_quote_cli.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "discover-markets"
 path = "src/bin/discover_markets.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "observe-markets"
 path = "src/bin/observe_markets.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "observe-narrow"
 path = "src/bin/observe_narrow.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "rebuild-report"
 path = "src/bin/rebuild_report.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "capture-parity-fixtures"
 path = "src/bin/capture_parity_fixtures.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "sim-meteora-route1"
 path = "src/bin/sim_meteora_route1.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "sim-pump-sell"
 path = "src/bin/sim_pump_sell.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "reprice-pump-fees"
 path = "src/bin/reprice_pump_fees.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "whirlpool-parity-capture"
 path = "src/bin/whirlpool_parity_capture.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "observe-xdex"
 path = "src/bin/observe_xdex.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "forensic-arb-scan"
 path = "src/bin/forensic_arb_scan.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "forensic-route-recon"
 path = "src/bin/forensic_route_recon.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "forensics-s15b"
 path = "src/bin/forensics_s15b.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "discover-venue-pairs"
 path = "src/bin/discover_venue_pairs.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "forensics-batch"
 path = "src/bin/forensics_batch.rs"
+required-features = ["legacy-tooling"]
 
 [[bin]]
 name = "observe-campaign"
 path = "src/bin/observe_campaign.rs"
+required-features = ["legacy-tooling"]
