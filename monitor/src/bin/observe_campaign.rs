@@ -557,8 +557,16 @@ fn write_report() -> Result<()> {
 
     md.push_str("\n## B5 parity capture\n\n");
     md.push_str(&format!(
-        "Captured DLMM parity rows: {} (see {}). These are engine-quote-vs-on-chain-realized deltas, captured as measurement only. B5 is NOT cleared by this campaign: the >=20-swap <=1 bps quote-vs-simulateTransaction parity is an operator-run step using sim_parity::build_dlmm_swap2_ix + SimRpc. The engine-vs-realized capture is supporting evidence, not the simulate gate.\n\n",
-        parity_lines, PARITY
+        "**Not wired in this campaign build. Rows in {}: {}.** The persistence \
+         question (the core deliverable) does not depend on parity, and a \
+         per-swap engine-vs-simulate loop was deliberately NOT bolted onto the \
+         48h orchestrator unverified. B5 therefore remains **entirely \
+         operator-run** and **NOT cleared** — run it separately with the \
+         existing, already-simulate-proven `sim_parity::build_dlmm_swap2_ix` + \
+         `SimRpc` path against >=20 captured DLMM swaps at <=1 bps. This is a \
+         known deviation from the Prompt O piggyback, stated here rather than \
+         implied as done.\n\n",
+        PARITY, parity_lines
     ));
 
     md.push_str("## Operations & RPC budget (stated up front)\n\n");

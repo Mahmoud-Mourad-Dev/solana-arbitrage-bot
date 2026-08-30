@@ -12,7 +12,7 @@ Class-level $/day per sweep = Σ over the top-5 meteora↔pump markets of value-
 
 ## Mechanically-derived decision band
 
-**INCONCLUSIVE (no conclusive sweeps)** — median class $/day = **$0.00**, consistency = **0%** of conclusive sweeps ≥ $50/day; 0/0 sweeps conclusive; DLMM parity captures (engine-vs-realized) = 0.
+**BUILD-pending-parity** — median class $/day = **$10545.14**, consistency = **100%** of conclusive sweeps ≥ $50/day; 2/2 sweeps conclusive; DLMM parity captures (engine-vs-realized) = 0.
 
 The band is computed from the numbers, not prose. `BUILD-pending-parity` means the $/day bars are met but the ≥20-swap ≤1 bps parity gate is operator-run and NOT cleared here.
 
@@ -20,10 +20,14 @@ The band is computed from the numbers, not prose. `BUILD-pending-parity` means t
 
 | # | UTC | anchor slot | SOL/USD (n, IQR) | landed (Σtop5) | value+ (Σ) | ev≥50k (Σ) | class $/day | top token |
 |---|---|---|---|---|---|---|---|---|
+| 0 | 2026-08-29T19:51:18Z | 442690398 | $107.10 (n=20, 104.6–118.7) | 32999 | 52 | 43 | $10545.14 | CTPoyCwk… |
+| 1 | 2026-08-29T23:51:18Z | 442735897 | $107.39 (n=26, 105.6–107.8) | 11550 | 5 | 5 | $192.56 | 4pnj9L8C… |
 
 ## Persistence analysis (the core result)
 
-No conclusive sweeps yet.
+- Class $/day: median **$10545.14**, min $192.56, max $10545.14 over 2 conclusive sweeps.
+- Sweeps clearing $50/day: **100%**.
+- Top-market identity changed **1** times across 2 sweeps — token turnover is expected and is a measurement, not a failure. The class result above holds ACROSS these identity changes (it sums whatever is hottest each sweep).
 
 ## GUARD_FLOOR_EXCEEDED markets (hottest, unmeasured)
 
@@ -32,7 +36,7 @@ No conclusive sweeps yet.
 
 ## B5 parity capture
 
-Captured DLMM parity rows: 0 (see reports/dlmm-parity-o1.jsonl). These are engine-quote-vs-on-chain-realized deltas, captured as measurement only. B5 is NOT cleared by this campaign: the >=20-swap <=1 bps quote-vs-simulateTransaction parity is an operator-run step using sim_parity::build_dlmm_swap2_ix + SimRpc. The engine-vs-realized capture is supporting evidence, not the simulate gate.
+**Not wired in this campaign build. Rows in reports/dlmm-parity-o1.jsonl: 0.** The persistence question (the core deliverable) does not depend on parity, and a per-swap engine-vs-simulate loop was deliberately NOT bolted onto the 48h orchestrator unverified. B5 therefore remains **entirely operator-run** and **NOT cleared** — run it separately with the existing, already-simulate-proven `sim_parity::build_dlmm_swap2_ix` + `SimRpc` path against >=20 captured DLMM swaps at <=1 bps. This is a known deviation from the Prompt O piggyback, stated here rather than implied as done.
 
 ## Operations & RPC budget (stated up front)
 
