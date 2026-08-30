@@ -24,8 +24,10 @@ const MIN_MONTHLY_USD_TO_BUILD: f64 = 5.0 * INFRA_FLOOR_USD_MONTH;
 /// Below this event rate a bot cannot amortize its fixed costs even if every
 /// event is won.
 const MIN_EVENTS_PER_DAY: f64 = 50.0;
-/// The threshold row used for "addressable" economics (net lamports).
-const ADDRESSABLE_THRESHOLD_LAMPORTS: i128 = 50_000;
+/// The threshold row used for "addressable" economics (net lamports). Sourced
+/// once from `arb_common::cost` (Prompt T1) — the LEGACY pre-tip threshold.
+const ADDRESSABLE_THRESHOLD_LAMPORTS: i128 =
+    arb_common::cost::ADDRESSABLE_THRESHOLD_LAMPORTS as i128;
 
 #[derive(Debug, Serialize)]
 struct Row {

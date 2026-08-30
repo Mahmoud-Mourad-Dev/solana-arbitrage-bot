@@ -17,8 +17,12 @@ use super::pipeline::{
 use super::schema::InputV2;
 
 /// Threshold at which an event is "addressable" (lamports, net) — the same
-/// 50k floor the batch verdict uses.
-pub const ADDRESSABLE_THRESHOLD_LAMPORTS: i128 = 50_000;
+/// LEGACY 50k floor the batch verdict uses, now sourced once from
+/// `arb_common::cost` (Prompt T1). NOTE: this is the unjustified pre-tip
+/// threshold, retained for the before/after comparison; the tip-aware floor is
+/// `arb_common::cost::min_profitable_gross_lamports`.
+pub const ADDRESSABLE_THRESHOLD_LAMPORTS: i128 =
+    arb_common::cost::ADDRESSABLE_THRESHOLD_LAMPORTS as i128;
 
 /// Adaptive window ladder in hours: start at 3h and halve on a guard fire,
 /// down to a 0.05h floor. Fixed sequence so the extrapolation factor of every
@@ -243,6 +247,17 @@ mod tests {
         assert_eq!(parse_landed_from_error(&e), Some(39097));
         let none = anyhow::anyhow!("TRUNCATED: pool X");
         assert_eq!(parse_landed_from_error(&none), None);
+    }
+
+    #[test]
+    fn legacy_threshold_matches_common() {
+        // Cross-crate guard (BINS_PER_ARRAY pattern): the monitor's threshold
+        // must equal the single source of truth in arb_common::cost.
+        assert_eq!(
+            ADDRESSABLE_THRESHOLD_LAMPORTS,
+            arb_common::cost::ADDRESSABLE_THRESHOLD_LAMPORTS as i128
+        );
+        assert_eq!(ADDRESSABLE_THRESHOLD_LAMPORTS, 50_000);
     }
 
     #[test]

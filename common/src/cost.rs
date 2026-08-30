@@ -13,6 +13,57 @@
 //! tip (and vice-versa). This module makes the tip (and every other cost)
 //! identical on both sides.
 
+/// LEGACY addressable-profit threshold, in lamports. The single source of
+/// truth for the "≥ threshold" figure that every economic report in this
+/// project used (Prompt A, the batch verdict, the O1 campaign).
+///
+/// **This number was never derived from measured execution cost** — it was a
+/// round guess. Prompt T replaces it with the tip-aware floor
+/// [`min_profitable_gross_lamports`]. It is retained ONLY so the before/after
+/// comparison in `docs/tip-aware-economics.md` can quote the old figure. Do
+/// not use it as a profitability gate in new code; use the cost model.
+///
+/// Previously duplicated in `forensics_batch.rs` and `forensics/campaign.rs`;
+/// unified here with a cross-crate guard, matching the
+/// `BINS_PER_ARRAY` / `MAX_BIN_PER_ARRAY` pattern.
+pub const ADDRESSABLE_THRESHOLD_LAMPORTS: u64 = 50_000;
+
+/// Jito's documented minimum tip for a bundle to be considered, in lamports.
+/// Source: Jito Low-Latency Txn Send docs (docs.jito.wtf/lowlatencytxnsend/) —
+/// "The minimum tips is 1000 lamports". This is a floor to be *considered*, not
+/// a competitive bid; see [`min_profitable_gross_lamports`].
+pub const JITO_MIN_TIP_LAMPORTS: u64 = 1_000;
+
+/// T3 — the minimum GROSS profit (lamports) at which a landed Jito bundle nets
+/// > 0, given the three real cost terms of a *winning* attempt:
+///
+/// ```text
+/// net = gross_profit - tip - priority_fee - signature_fees
+/// ```
+///
+/// so `net > 0` requires `gross > tip + priority_fee + signature_fees`, which
+/// is exactly what this returns. Every term is named and sourced:
+///
+/// - `tip_lamports` — the **competitive bid**, not a fee. Pass a measured
+///   percentile of Jito's landed-tip floor (p50 = usually lose the auction,
+///   p75 = usually win but keep less). Model both; never hide one.
+/// - `priority_fee_lamports` — ComputeBudget priority (cu_limit × cu_price).
+/// - `signature_fee_lamports` — 5_000 × signatures ([`CostModel`] default).
+///
+/// The tip is paid ONLY when the bundle lands. A bundle that does not land
+/// costs nothing — the property that lets this design lose 0 on reverts, unlike
+/// a raw-transaction bot. That asymmetry is captured by callers counting only
+/// LANDED, value-positive events against this floor.
+pub fn min_profitable_gross_lamports(
+    tip_lamports: u64,
+    priority_fee_lamports: u64,
+    signature_fee_lamports: u64,
+) -> u64 {
+    tip_lamports
+        .saturating_add(priority_fee_lamports)
+        .saturating_add(signature_fee_lamports)
+}
+
 /// The out-of-band payment made to get a transaction included, abstracted so
 /// the same economics work across inclusion strategies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,10 +140,16 @@ pub struct CostModel {
     pub payment: ExecutionPayment,
 }
 
+impl CostModel {
+    /// Base signature fee for a 1-signature transaction (lamports) — the
+    /// Solana-fixed 5_000. Single source for the forensics sig-fee floor too.
+    pub const DEFAULT_SIGNATURE_FEE: u64 = 5_000;
+}
+
 impl Default for CostModel {
     fn default() -> Self {
         CostModel {
-            signature_fee_lamports: 5_000,
+            signature_fee_lamports: Self::DEFAULT_SIGNATURE_FEE,
             compute_unit_limit: 0,
             compute_unit_price_micro: 0,
             extra_priority_lamports: 0,
@@ -282,6 +339,26 @@ mod tests {
         let net_at_room =
             gross as i128 - m.fixed_costs() as i128 - room as i128 - m.margin_lamports as i128;
         assert_eq!(net_at_room, m.required_net_lamports as i128);
+    }
+
+    #[test]
+    fn min_profitable_gross_sums_the_three_cost_terms() {
+        // T3: net > 0 iff gross > tip + priority + signatures.
+        assert_eq!(min_profitable_gross_lamports(10_000, 7_000, 5_000), 22_000);
+        // At the documented Jito minimum tip + a bare 1-sig, no priority.
+        assert_eq!(
+            min_profitable_gross_lamports(JITO_MIN_TIP_LAMPORTS, 0, 5_000),
+            6_000
+        );
+        // Saturating, never panics on extreme inputs.
+        assert_eq!(min_profitable_gross_lamports(u64::MAX, 1, 1), u64::MAX);
+    }
+
+    #[test]
+    fn legacy_threshold_is_the_unified_constant() {
+        // The value both forensics call sites now import; guarded cross-crate
+        // by the monitor's `legacy_threshold_matches_common` test.
+        assert_eq!(ADDRESSABLE_THRESHOLD_LAMPORTS, 50_000);
     }
 
     #[test]

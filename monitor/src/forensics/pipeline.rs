@@ -17,11 +17,20 @@ use super::price::{local_price, median_price, value_pnl, PricePoint};
 use super::schema::{EvidenceTx, InputV2, WSOL_MINT};
 
 /// Base fee for a 1-signature transaction — the economic floor an opportunity
-/// must clear before it is bankable at all.
-pub const SIG_FEE_FLOOR_LAMPORTS: i128 = 5_000;
+/// must clear before it is bankable at all. Sourced from the shared cost model.
+pub const SIG_FEE_FLOOR_LAMPORTS: i128 = arb_common::cost::CostModel::DEFAULT_SIGNATURE_FEE as i128;
 
-/// Fixed thresholds for the Q4 distribution table (lamports, net).
-pub const Q4_THRESHOLDS: [i128; 7] = [0, 5_000, 10_000, 25_000, 50_000, 100_000, 250_000];
+/// Fixed thresholds for the Q4 distribution table (lamports, net). The 50k rung
+/// is the unified `ADDRESSABLE_THRESHOLD_LAMPORTS` — no magic number here.
+pub const Q4_THRESHOLDS: [i128; 7] = [
+    0,
+    5_000,
+    10_000,
+    25_000,
+    arb_common::cost::ADDRESSABLE_THRESHOLD_LAMPORTS as i128,
+    100_000,
+    250_000,
+];
 
 /// The minimum number of clean two-sided price points required before
 /// quote-priced P&L is computed at all. Below this, only inventory-neutral
