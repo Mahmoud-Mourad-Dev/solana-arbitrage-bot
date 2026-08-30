@@ -41,6 +41,15 @@ pub const RAYDIUM_SWAP_BASE_IN_TAG: u8 = 9;
 /// captured from live mainnet CPIs and byte-exact-verified in Slice 5.
 /// A monitor-side test guards this constant against that source.
 pub const METEORA_SWAP2_DISCRIMINATOR: [u8; 8] = [0x41, 0x4b, 0x3f, 0x4c, 0xeb, 0x5b, 0x5b, 0x88];
+/// PumpSwap AMM instruction discriminators, `sha256("global:<name>")[..8]`.
+/// Source of truth: `monitor/src/pump_amm.rs` (`IX_SELL_DISCRIMINATOR` /
+/// `IX_BUY_DISCRIMINATOR`) and `monitor/src/pump_reconstruct.rs`
+/// (`SELL_DISCRIMINATOR`), both proven byte-exact against captured mainnet
+/// sells (S1–S13). A monitor-side test guards these against that source.
+/// SELL = base in → quote out (exact for all pools); BUY = quote in → base out
+/// (exact only for creator-less pools — the quote refuses creator-pool BUY).
+pub const PUMP_SELL_DISCRIMINATOR: [u8; 8] = [0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad];
+pub const PUMP_BUY_DISCRIMINATOR: [u8; 8] = [0x66, 0x06, 0x3d, 0x12, 0x01, 0xda, 0xeb, 0xea];
 
 /// Program ids as raw bytes-agnostic base58 strings (each crate converts to
 /// its own Pubkey/Address type; keeping strings avoids a Solana dependency).
@@ -50,6 +59,9 @@ pub const TOKEN_PROGRAM_STR: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
 /// Source of truth: `monitor/src/meteora_dlmm.rs::DLMM_PROGRAM_ID` (mainnet
 /// program behind the 6/6 live-exact quote parity); guarded by a monitor test.
 pub const METEORA_DLMM_PROGRAM_STR: &str = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo";
+/// Source of truth: `monitor/src/pump_amm.rs::PUMP_AMM_PROGRAM_ID`; guarded by
+/// a monitor test.
+pub const PUMP_AMM_PROGRAM_STR: &str = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA";
 
 /// Base58-decoded program ids. These are the on-chain source of truth (the
 /// Pinocchio program builds its `Address` constants from them, avoiding a
@@ -70,6 +82,10 @@ pub const TOKEN_PROGRAM_ID: [u8; 32] = [
 pub const METEORA_DLMM_PROGRAM_ID: [u8; 32] = [
     4, 233, 225, 47, 188, 132, 232, 38, 201, 50, 204, 233, 226, 100, 12, 206, 21, 89, 12, 28, 98,
     115, 176, 146, 87, 8, 186, 59, 133, 32, 176, 188,
+];
+pub const PUMP_AMM_PROGRAM_ID: [u8; 32] = [
+    12, 20, 222, 252, 130, 94, 198, 118, 148, 37, 8, 24, 187, 101, 64, 101, 244, 41, 141, 49, 86,
+    213, 113, 180, 212, 248, 9, 12, 24, 233, 168, 99,
 ];
 
 /// Stable custom error codes surfaced as `ProgramError::Custom(code)`.
@@ -129,6 +145,8 @@ pub enum DexKind {
     OrcaWhirlpool = 1,
     #[cfg_attr(feature = "serde", serde(rename = "meteora-dlmm"))]
     MeteoraDlmm = 2,
+    #[cfg_attr(feature = "serde", serde(rename = "pump-amm"))]
+    PumpAmm = 3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +193,7 @@ pub fn parse_instruction(data: &[u8]) -> Result<IxParams, ArbError> {
             0 => DexKind::RaydiumV4,
             1 => DexKind::OrcaWhirlpool,
             2 => DexKind::MeteoraDlmm,
+            3 => DexKind::PumpAmm,
             _ => return Err(ArbError::UnknownDex),
         };
         let num_accounts = data[o + 1];
@@ -253,6 +272,24 @@ pub fn build_meteora_swap_data(amount_in: u64, min_amount_out: u64) -> Vec<u8> {
     data.extend_from_slice(&amount_in.to_le_bytes());
     data.extend_from_slice(&min_amount_out.to_le_bytes());
     data.extend_from_slice(&[0, 0, 0, 0]); // remaining_accounts_info: empty vec
+    data
+}
+
+/// PumpSwap AMM swap data: `disc(8) | amount_in:u64 | min_out:u64` = 24 bytes.
+/// `is_sell` selects SELL (base in → quote out) vs BUY (quote in → base out).
+/// Layout source: `monitor/src/pump_reconstruct.rs::reconstruct_sell_data`
+/// (proven byte-exact against captured mainnet sells). For a pump hop the
+/// per-hop `a_to_b` flag carries `is_sell` (there is no sqrt-price bound to
+/// encode), so the wire format is unchanged — `HOP_LEN` stays 12.
+pub fn build_pump_swap_data(amount_in: u64, min_out: u64, is_sell: bool) -> Vec<u8> {
+    let mut data = Vec::with_capacity(24);
+    data.extend_from_slice(if is_sell {
+        &PUMP_SELL_DISCRIMINATOR
+    } else {
+        &PUMP_BUY_DISCRIMINATOR
+    });
+    data.extend_from_slice(&amount_in.to_le_bytes());
+    data.extend_from_slice(&min_out.to_le_bytes());
     data
 }
 
@@ -362,6 +399,79 @@ mod tests {
         assert_eq!(DexKind::RaydiumV4 as u8, 0);
         assert_eq!(DexKind::OrcaWhirlpool as u8, 1);
         assert_eq!(DexKind::MeteoraDlmm as u8, 2);
+        assert_eq!(DexKind::PumpAmm as u8, 3);
+    }
+
+    #[test]
+    fn pump_swap_data_layout() {
+        let sell = build_pump_swap_data(123, 456, true);
+        assert_eq!(sell.len(), 24);
+        assert_eq!(&sell[0..8], &PUMP_SELL_DISCRIMINATOR);
+        assert_eq!(u64::from_le_bytes(sell[8..16].try_into().unwrap()), 123);
+        assert_eq!(u64::from_le_bytes(sell[16..24].try_into().unwrap()), 456);
+        let buy = build_pump_swap_data(1, 2, false);
+        assert_eq!(&buy[0..8], &PUMP_BUY_DISCRIMINATOR);
+    }
+
+    /// A mixed MeteoraDlmm → PumpAmm route round-trips through the UNCHANGED
+    /// wire format (the WSOL→token→WSOL 2-hop the surviving strategy needs).
+    #[test]
+    fn mixed_dlmm_pump_route_roundtrips() {
+        let params = IxParams {
+            amount_in: 500_000_000,
+            min_profit: 100_000,
+            hops: vec![
+                HopParams {
+                    dex: DexKind::MeteoraDlmm,
+                    num_accounts: 20,
+                    source_index: 5,
+                    a_to_b: false,
+                    min_amount_out: 42_000_000,
+                },
+                HopParams {
+                    dex: DexKind::PumpAmm,
+                    num_accounts: 24, // the pump 24-account swap slice + program
+                    source_index: 5,  // user_base_ata at CPI idx 5 → slice idx 6? resolver sets it
+                    a_to_b: true,     // pump: a_to_b = is_sell (base in → quote out)
+                    min_amount_out: 500_100_000,
+                },
+            ],
+        };
+        let encoded = encode_instruction(&params);
+        assert_eq!(
+            encoded.len(),
+            HEADER_LEN + 2 * HOP_LEN,
+            "wire format unchanged"
+        );
+        assert_eq!(parse_instruction(&encoded).unwrap(), params);
+    }
+
+    /// Backward compatibility: a route serialized BEFORE PumpAmm existed (only
+    /// Raydium/Whirlpool/Meteora tags) still decodes byte-identically.
+    #[test]
+    fn pre_pump_route_still_decodes() {
+        let legacy = IxParams {
+            amount_in: 1_000_000_000,
+            min_profit: 1_205_000,
+            hops: vec![
+                HopParams {
+                    dex: DexKind::OrcaWhirlpool,
+                    num_accounts: 12,
+                    source_index: 4,
+                    a_to_b: true,
+                    min_amount_out: 152_000_000,
+                },
+                HopParams {
+                    dex: DexKind::MeteoraDlmm,
+                    num_accounts: 20,
+                    source_index: 5,
+                    a_to_b: false,
+                    min_amount_out: 1_001_000_000,
+                },
+            ],
+        };
+        let encoded = encode_instruction(&legacy);
+        assert_eq!(parse_instruction(&encoded).unwrap(), legacy);
     }
 
     #[test]
@@ -429,6 +539,10 @@ mod tests {
             bs58::decode(METEORA_DLMM_PROGRAM_STR).into_vec().unwrap(),
             METEORA_DLMM_PROGRAM_ID
         );
+        assert_eq!(
+            bs58::decode(PUMP_AMM_PROGRAM_STR).into_vec().unwrap(),
+            PUMP_AMM_PROGRAM_ID
+        );
     }
 
     #[cfg(feature = "serde")]
@@ -445,6 +559,10 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<DexKind>("\"meteora-dlmm\"").unwrap(),
             DexKind::MeteoraDlmm
+        );
+        assert_eq!(
+            serde_json::from_str::<DexKind>("\"pump-amm\"").unwrap(),
+            DexKind::PumpAmm
         );
     }
 }

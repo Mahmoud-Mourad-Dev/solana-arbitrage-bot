@@ -291,6 +291,7 @@ impl DiscoveryEngine {
                 expected_amount_out: out,
                 min_amount_out: (out as u128 * (10_000 - cfg.slippage_bps as u128) / 10_000) as u64,
                 bin_arrays: Vec::new(),
+                pump_carried_accounts: Vec::new(),
             });
             amount = out;
         }

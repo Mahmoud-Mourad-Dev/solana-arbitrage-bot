@@ -36,9 +36,9 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use arb_common::ix::{
-    build_meteora_swap_data, build_raydium_swap_data, build_whirlpool_swap_data, parse_instruction,
-    ArbError, DexKind, METEORA_DLMM_PROGRAM_ID, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID,
-    WHIRLPOOL_PROGRAM_ID,
+    build_meteora_swap_data, build_pump_swap_data, build_raydium_swap_data,
+    build_whirlpool_swap_data, parse_instruction, ArbError, DexKind, METEORA_DLMM_PROGRAM_ID,
+    PUMP_AMM_PROGRAM_ID, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID, WHIRLPOOL_PROGRAM_ID,
 };
 use pinocchio::account::AccountView;
 use pinocchio::address::Address;
@@ -51,6 +51,7 @@ use pinocchio::instruction::{InstructionAccount, InstructionView};
 pub const RAYDIUM_V4_PROGRAM: Address = Address::new_from_array(RAYDIUM_V4_PROGRAM_ID);
 pub const WHIRLPOOL_PROGRAM: Address = Address::new_from_array(WHIRLPOOL_PROGRAM_ID);
 pub const METEORA_DLMM_PROGRAM: Address = Address::new_from_array(METEORA_DLMM_PROGRAM_ID);
+pub const PUMP_AMM_PROGRAM: Address = Address::new_from_array(PUMP_AMM_PROGRAM_ID);
 pub const TOKEN_PROGRAM: Address = Address::new_from_array(TOKEN_PROGRAM_ID);
 
 // On-chain entrypoint only. We install the pieces explicitly rather than via
@@ -140,6 +141,7 @@ pub fn process_instruction(
             DexKind::RaydiumV4 => &RAYDIUM_V4_PROGRAM,
             DexKind::OrcaWhirlpool => &WHIRLPOOL_PROGRAM,
             DexKind::MeteoraDlmm => &METEORA_DLMM_PROGRAM,
+            DexKind::PumpAmm => &PUMP_AMM_PROGRAM,
         };
         if dex_program.address() != expected || !dex_program.executable() {
             return Err(err(ArbError::InvalidDexProgram));
@@ -162,6 +164,10 @@ pub fn process_instruction(
                 build_whirlpool_swap_data(amount_in, hop.min_amount_out, hop.a_to_b)
             }
             DexKind::MeteoraDlmm => build_meteora_swap_data(amount_in, hop.min_amount_out),
+            // Pump: a_to_b carries is_sell (base in → quote out). The account
+            // list is forwarded verbatim from the resolver, exactly like the
+            // other venues — the program is account-agnostic.
+            DexKind::PumpAmm => build_pump_swap_data(amount_in, hop.min_amount_out, hop.a_to_b),
         };
 
         // Privileges inherited verbatim from the outer transaction.

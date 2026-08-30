@@ -24,5 +24,10 @@ pub mod mode;
 #[cfg(feature = "pda")]
 pub mod dlmm_pda;
 
+/// Off-chain PumpSwap AMM PDA derivations (feature `pda`). Shared by monitor
+/// and executor; see the module for what is derivable vs. must-be-carried.
+#[cfg(feature = "pda")]
+pub mod pump_pda;
+
 #[cfg(feature = "serde")]
 pub mod opportunity;

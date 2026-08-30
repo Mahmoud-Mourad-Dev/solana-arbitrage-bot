@@ -294,6 +294,114 @@ fn build_two_hop(
     (ix, accounts)
 }
 
+fn pump_program() -> Pubkey {
+    pk(arb_common::ix::PUMP_AMM_PROGRAM_STR)
+}
+
+/// Setup that also registers the mock DEX at the PUMP program id, so a pump hop
+/// passes the program-id check and executes the mock on CPI.
+fn setup_with_pump() -> Fixture {
+    let f = setup();
+    let mut mollusk = f.mollusk;
+    mollusk.add_program(&pump_program(), "mock_dex");
+    Fixture { mollusk, ..f }
+}
+
+/// P3: two hops where the PUMP leg is the INTERMEDIATE (hop 0). hop0 is a
+/// PumpAmm swap (mock at the pump id) crediting the intermediate; hop1 sweeps
+/// it to base. The B3 intermediate-min check must fire on hop0(pump).
+fn build_two_hop_pump_intermediate(
+    f: &Fixture,
+    pump_min_out: u64,
+) -> (Instruction, Vec<(Pubkey, Account)>) {
+    let (token_id, token_acct) = mollusk_svm_programs_token::token::keyed_account();
+    let intermediate = Pubkey::new_unique();
+    let data = encode_instruction(&IxParams {
+        amount_in: AMOUNT_IN,
+        min_profit: 0,
+        hops: vec![
+            HopParams {
+                dex: DexKind::PumpAmm, // intermediate leg
+                num_accounts: 5,
+                source_index: 3,
+                a_to_b: true, // is_sell
+                min_amount_out: pump_min_out,
+            },
+            HopParams {
+                dex: DexKind::RaydiumV4,
+                num_accounts: 5,
+                source_index: 2, // intermediate within hop1 slice
+                a_to_b: false,
+                min_amount_out: 0,
+            },
+        ],
+    });
+    let metas = vec![
+        AccountMeta::new_readonly(f.authority, true),
+        AccountMeta::new(f.base, false),
+        // hop0 (pump) slice: faucet -> intermediate
+        AccountMeta::new_readonly(pump_program(), false),
+        AccountMeta::new_readonly(token_id, false),
+        AccountMeta::new(f.faucet, false),
+        AccountMeta::new(intermediate, false),
+        AccountMeta::new_readonly(f.authority, true),
+        // hop1 (raydium) slice: intermediate -> base
+        AccountMeta::new_readonly(raydium_program(), false),
+        AccountMeta::new_readonly(token_id, false),
+        AccountMeta::new(intermediate, false),
+        AccountMeta::new(f.base, false),
+        AccountMeta::new_readonly(f.authority, true),
+    ];
+    let ix = Instruction {
+        program_id: f.arb_program,
+        accounts: metas,
+        data,
+    };
+    let accounts = vec![
+        (f.authority, system_account(1_000_000_000)),
+        (
+            f.base,
+            spl_token_account(pk(WSOL_STR), f.authority, START_BASE),
+        ),
+        (raydium_program(), executable_program_account(LOADER_V3)),
+        (pump_program(), executable_program_account(LOADER_V3)),
+        (token_id, token_acct),
+        (
+            f.faucet,
+            spl_token_account(pk(WSOL_STR), f.authority, FAUCET),
+        ),
+        (
+            intermediate,
+            spl_token_account(pk(WSOL_STR), f.authority, 0),
+        ),
+    ];
+    (ix, accounts)
+}
+
+#[test]
+fn pump_intermediate_passes_when_it_clears_min() {
+    let f = setup_with_pump();
+    let (ix, accounts) = build_two_hop_pump_intermediate(&f, AMOUNT_IN);
+    let result = f.mollusk.process_instruction(&ix, &accounts);
+    assert!(
+        result.raw_result.is_ok(),
+        "expected success, got {:?}",
+        result.raw_result
+    );
+}
+
+#[test]
+fn pump_intermediate_reverts_when_below_min() {
+    // VERIFIED: with the B3 check REMOVED this case PASSES (the final profit
+    // check alone clears — base grows by AMOUNT_IN, min_profit 0); with the
+    // check PRESENT it reverts ProfitNotMet(8). The pump leg is the
+    // intermediate, so this proves B3 covers pump hops.
+    let f = setup_with_pump();
+    let (ix, accounts) = build_two_hop_pump_intermediate(&f, AMOUNT_IN * 2);
+    let result = f.mollusk.process_instruction(&ix, &accounts);
+    assert_custom(&result, 8); // ProfitNotMet, raised by the intermediate check
+}
+
 #[test]
 fn two_hop_passes_when_intermediate_clears_min() {
     let f = setup();

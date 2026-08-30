@@ -19,15 +19,21 @@ use tokio::sync::Mutex;
 
 use arb_common::dlmm_pda::{bin_array_pda, bitmap_extension_pda, dlmm_oracle, event_authority};
 use arb_common::ix::{
-    DexKind, METEORA_DLMM_PROGRAM_ID, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID, WHIRLPOOL_PROGRAM_ID,
+    DexKind, METEORA_DLMM_PROGRAM_ID, PUMP_AMM_PROGRAM_ID, RAYDIUM_V4_PROGRAM_ID, TOKEN_PROGRAM_ID,
+    WHIRLPOOL_PROGRAM_ID,
 };
 use arb_common::opportunity::OpportunityHop;
+use arb_common::pump_pda;
 
 // Program ids as solana Pubkeys, built from arb-common's canonical bytes
 // (the same source of truth the on-chain program uses).
 pub const RAYDIUM_V4_PROGRAM: Pubkey = Pubkey::new_from_array(RAYDIUM_V4_PROGRAM_ID);
 pub const WHIRLPOOL_PROGRAM: Pubkey = Pubkey::new_from_array(WHIRLPOOL_PROGRAM_ID);
 pub const METEORA_DLMM_PROGRAM: Pubkey = Pubkey::new_from_array(METEORA_DLMM_PROGRAM_ID);
+pub const PUMP_AMM_PROGRAM: Pubkey = Pubkey::new_from_array(PUMP_AMM_PROGRAM_ID);
+/// Pump fees-v2 program (sell account [20]). Source: sim_parity::PUMP_FEE_PROGRAM_ID.
+pub const PUMP_FEE_PROGRAM: Pubkey = pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
+pub const SYSTEM_PROGRAM: Pubkey = pubkey!("11111111111111111111111111111111");
 pub const TOKEN_PROGRAM: Pubkey = Pubkey::new_from_array(TOKEN_PROGRAM_ID);
 pub const TOKEN_2022_PROGRAM: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 pub const MEMO_PROGRAM: Pubkey = pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
@@ -59,6 +65,15 @@ pub fn derive_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
 
 fn read_pubkey(data: &[u8], offset: usize) -> Pubkey {
     Pubkey::new_from_array(data[offset..offset + 32].try_into().unwrap())
+}
+
+/// ATA for (owner, mint) under an EXPLICIT token program (Token or Token-2022).
+pub fn derive_ata_prog(owner: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(
+        &[owner.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &ATA_PROGRAM,
+    )
+    .0
 }
 
 /// DLMM stores a per-mint flag: 1 ⇒ Token-2022, else classic Token program.
@@ -105,6 +120,27 @@ pub struct MeteoraDlmmKeys {
     pub fetched_at: Instant,
 }
 
+/// PumpSwap AMM keys derivable from pool state + PDAs. The rotating/fee-v2
+/// accounts ([9],[10],[19],[21],[22],[23]) are NOT here — they are undocumented
+/// and rotating (docs/pump-fee-v2-layout.md) and must be carried from the quote.
+#[derive(Debug, Clone)]
+pub struct PumpAmmKeys {
+    pub pool: Pubkey,
+    pub base_mint: Pubkey,
+    pub quote_mint: Pubkey,
+    pub base_vault: Pubkey,
+    pub quote_vault: Pubkey,
+    pub coin_creator: Pubkey,
+    pub base_token_program: Pubkey,
+    pub quote_token_program: Pubkey,
+    // derived PDAs
+    pub global_config: Pubkey,
+    pub event_authority: Pubkey,
+    pub coin_creator_vault_authority: Pubkey,
+    pub coin_creator_vault_ata: Pubkey,
+    pub fetched_at: Instant,
+}
+
 #[derive(Debug, Clone)]
 pub struct WhirlpoolKeys {
     pub whirlpool: Pubkey,
@@ -134,6 +170,7 @@ pub struct Resolver {
     raydium_cache: Mutex<HashMap<Pubkey, Arc<RaydiumKeys>>>,
     whirlpool_cache: Mutex<HashMap<Pubkey, Arc<WhirlpoolKeys>>>,
     dlmm_cache: Mutex<HashMap<Pubkey, Arc<MeteoraDlmmKeys>>>,
+    pump_cache: Mutex<HashMap<Pubkey, Arc<PumpAmmKeys>>>,
     whirlpool_ttl: Duration,
 }
 
@@ -145,6 +182,7 @@ impl Resolver {
             raydium_cache: Mutex::new(HashMap::new()),
             whirlpool_cache: Mutex::new(HashMap::new()),
             dlmm_cache: Mutex::new(HashMap::new()),
+            pump_cache: Mutex::new(HashMap::new()),
             whirlpool_ttl,
         }
     }
@@ -164,6 +202,10 @@ impl Resolver {
                 let k = self.dlmm_keys(pool).await?;
                 Ok((k.mint_x, k.mint_y))
             }
+            DexKind::PumpAmm => {
+                let k = self.pump_keys(pool).await?;
+                Ok((k.base_mint, k.quote_mint))
+            }
         }
     }
 
@@ -182,6 +224,15 @@ impl Resolver {
             DexKind::MeteoraDlmm => {
                 let keys = self.dlmm_keys(pool).await?;
                 self.dlmm_hop(&keys, input_mint, hop.min_amount_out, &hop.bin_arrays)
+            }
+            DexKind::PumpAmm => {
+                let keys = self.pump_keys(pool).await?;
+                self.pump_hop(
+                    &keys,
+                    input_mint,
+                    hop.min_amount_out,
+                    &hop.pump_carried_accounts,
+                )
             }
         }
     }
@@ -427,6 +478,174 @@ impl Resolver {
         })
     }
 
+    // ── PumpSwap AMM ──────────────────────────────────────────────────────────
+
+    async fn pump_keys(&self, pool: Pubkey) -> Result<Arc<PumpAmmKeys>> {
+        if let Some(k) = self.pump_cache.lock().await.get(&pool) {
+            if k.fetched_at.elapsed() < self.whirlpool_ttl {
+                return Ok(k.clone());
+            }
+        }
+        let data = self
+            .rpc
+            .get_account_data(&pool)
+            .await
+            .with_context(|| format!("fetch pump pool {pool}"))?;
+        // Offsets + discriminator from monitor/src/pump_amm.rs (proven).
+        const POOL_DISC: [u8; 8] = [0xf1, 0x9a, 0x6d, 0x04, 0x11, 0xb1, 0x6d, 0xbc];
+        const POOL_MIN_LEN: usize = 243;
+        if data.len() < POOL_MIN_LEN || data[0..8] != POOL_DISC {
+            bail!("{pool} is not a PumpSwap pool (len={})", data.len());
+        }
+        let base_mint = read_pubkey(&data, 43);
+        let quote_mint = read_pubkey(&data, 75);
+        let base_vault = read_pubkey(&data, 139);
+        let quote_vault = read_pubkey(&data, 171);
+        let coin_creator = read_pubkey(&data, 211);
+
+        // Token programs [11]/[12]: the OWNER of each mint account (Token vs
+        // Token-2022). Read them, never assume — a pump base can be Token-2022.
+        let base_token_program = self.mint_owner(&base_mint).await?;
+        let quote_token_program = self.mint_owner(&quote_mint).await?;
+
+        let global_config = pump_pda::global_config(&PUMP_AMM_PROGRAM);
+        let event_authority = pump_pda::event_authority(&PUMP_AMM_PROGRAM);
+        let coin_creator_vault_authority =
+            pump_pda::coin_creator_vault_authority(&PUMP_AMM_PROGRAM, &coin_creator);
+        // The coin-creator vault ATA is held for the QUOTE mint under its token
+        // program (sell account [17]).
+        let coin_creator_vault_ata = pump_pda::coin_creator_vault_ata(
+            &PUMP_AMM_PROGRAM,
+            &coin_creator,
+            &quote_mint,
+            &quote_token_program,
+            &ATA_PROGRAM,
+        );
+
+        let keys = Arc::new(PumpAmmKeys {
+            pool,
+            base_mint,
+            quote_mint,
+            base_vault,
+            quote_vault,
+            coin_creator,
+            base_token_program,
+            quote_token_program,
+            global_config,
+            event_authority,
+            coin_creator_vault_authority,
+            coin_creator_vault_ata,
+            fetched_at: Instant::now(),
+        });
+        self.pump_cache.lock().await.insert(pool, keys.clone());
+        Ok(keys)
+    }
+
+    /// The owner program of a mint account (Token or Token-2022).
+    async fn mint_owner(&self, mint: &Pubkey) -> Result<Pubkey> {
+        let acc = self
+            .rpc
+            .get_account(mint)
+            .await
+            .with_context(|| format!("fetch mint {mint}"))?;
+        if acc.owner != TOKEN_PROGRAM && acc.owner != TOKEN_2022_PROGRAM {
+            bail!("mint {mint} owner {} is not a token program", acc.owner);
+        }
+        Ok(acc.owner)
+    }
+
+    /// Build the PumpSwap swap hop slice `[pump_program, ...24 CPI accounts]`.
+    ///
+    /// Account order + writable/signer flags are the captured mainnet SELL CPI
+    /// (monitor/fixtures/pump/reconstruction_fixtures.json route1) — validated
+    /// index-by-index by `pump_hop_account_order_matches_captured_cpi`.
+    ///
+    /// Six accounts CANNOT be derived from pool state (undocumented seeds +
+    /// rotating recipient — docs/pump-fee-v2-layout.md): [9] protocol_fee_
+    /// recipient, [10] its ATA, [19] fee_config, [21] fee_pool, [22] fee_pool_
+    /// state, [23] fee_recipient_ata. They MUST be carried from the quote in
+    /// exactly that order. An empty/short/invalid set is a HARD ERROR — never
+    /// guessed, never defaulted.
+    fn pump_hop(
+        &self,
+        k: &PumpAmmKeys,
+        input_mint: Pubkey,
+        min_amount_out: u64,
+        carried: &[String],
+    ) -> Result<ResolvedHop> {
+        let is_sell = if input_mint == k.base_mint {
+            true // base in → quote out
+        } else if input_mint == k.quote_mint {
+            false // quote in → base out
+        } else {
+            bail!("input mint {input_mint} not in pump pool {}", k.pool);
+        };
+        if carried.len() != 6 {
+            bail!(
+                "pump hop on {} requires exactly 6 carried accounts \
+                 [recipient, recipient_ata, fee_config, fee_pool, fee_pool_state, \
+                 fee_recipient_ata] from the quote — got {}; refusing to guess",
+                k.pool,
+                carried.len()
+            );
+        }
+        let mut c = [Pubkey::default(); 6];
+        for (i, s) in carried.iter().enumerate() {
+            c[i] = Pubkey::from_str(s)
+                .with_context(|| format!("bad carried pump account [{i}]: {s}"))?;
+        }
+        let (recipient, recipient_ata, fee_config, fee_pool, fee_pool_state, fee_recipient_ata) =
+            (c[0], c[1], c[2], c[3], c[4], c[5]);
+
+        let user_base_ata = derive_ata_prog(&self.owner, &k.base_mint, &k.base_token_program);
+        let user_quote_ata = derive_ata_prog(&self.owner, &k.quote_mint, &k.quote_token_program);
+
+        // CPI accounts [0..24] in the captured order; w/s flags from the CPI.
+        let metas = vec![
+            AccountMeta::new_readonly(PUMP_AMM_PROGRAM, false), // slice[0] hop program
+            AccountMeta::new(k.pool, false),                    // 0 pool (w)
+            AccountMeta::new_readonly(self.owner, true),        // 1 user (w,s) — writable below
+            AccountMeta::new_readonly(k.global_config, false),  // 2
+            AccountMeta::new_readonly(k.base_mint, false),      // 3
+            AccountMeta::new_readonly(k.quote_mint, false),     // 4
+            AccountMeta::new(user_base_ata, false),             // 5 (w)
+            AccountMeta::new(user_quote_ata, false),            // 6 (w)
+            AccountMeta::new(k.base_vault, false),              // 7 (w)
+            AccountMeta::new(k.quote_vault, false),             // 8 (w)
+            AccountMeta::new_readonly(recipient, false),        // 9 carried
+            AccountMeta::new(recipient_ata, false),             // 10 carried (w)
+            AccountMeta::new_readonly(k.base_token_program, false), // 11
+            AccountMeta::new_readonly(k.quote_token_program, false), // 12
+            AccountMeta::new_readonly(SYSTEM_PROGRAM, false),   // 13
+            AccountMeta::new_readonly(ATA_PROGRAM, false),      // 14
+            AccountMeta::new_readonly(k.event_authority, false), // 15
+            AccountMeta::new_readonly(PUMP_AMM_PROGRAM, false), // 16 program (self)
+            AccountMeta::new(k.coin_creator_vault_ata, false),  // 17 (w)
+            AccountMeta::new_readonly(k.coin_creator_vault_authority, false), // 18
+            AccountMeta::new_readonly(fee_config, false),       // 19 carried
+            AccountMeta::new_readonly(PUMP_FEE_PROGRAM, false), // 20
+            AccountMeta::new_readonly(fee_pool, false),         // 21 carried
+            AccountMeta::new_readonly(fee_pool_state, false),   // 22 carried
+            AccountMeta::new(fee_recipient_ata, false),         // 23 carried (w)
+        ];
+        // user (CPI idx 1 → slice idx 2) must be a writable signer.
+        let mut metas = metas;
+        metas[2] = AccountMeta::new(self.owner, true);
+
+        // The program reads the source balance for hops>0 at `source_index`.
+        // SELL sweeps user_base_ata (CPI 5 → slice 6); BUY sweeps user_quote_ata
+        // (CPI 6 → slice 7).
+        let source_index = if is_sell { 6 } else { 7 };
+
+        Ok(ResolvedHop {
+            dex: DexKind::PumpAmm,
+            metas,
+            source_index,
+            a_to_b: is_sell, // program maps a_to_b → is_sell for pump
+            min_amount_out,
+        })
+    }
+
     // ── Whirlpool ───────────────────────────────────────────────────────────
 
     async fn whirlpool_keys(&self, pool: Pubkey) -> Result<Arc<WhirlpoolKeys>> {
@@ -666,6 +885,115 @@ mod tests {
         );
         let k = dlmm_keys_fixture();
         assert!(r.dlmm_hop(&k, Pubkey::new_unique(), 1, &[0]).is_err());
+    }
+
+    fn pump_keys_fixture() -> PumpAmmKeys {
+        let base_mint = Pubkey::new_unique();
+        let quote_mint = WSOL_MINT;
+        PumpAmmKeys {
+            pool: Pubkey::new_unique(),
+            base_mint,
+            quote_mint,
+            base_vault: Pubkey::new_unique(),
+            quote_vault: Pubkey::new_unique(),
+            coin_creator: Pubkey::new_unique(),
+            base_token_program: TOKEN_2022_PROGRAM,
+            quote_token_program: TOKEN_PROGRAM,
+            global_config: Pubkey::new_unique(),
+            event_authority: Pubkey::new_unique(),
+            coin_creator_vault_authority: Pubkey::new_unique(),
+            coin_creator_vault_ata: Pubkey::new_unique(),
+            fetched_at: Instant::now(),
+        }
+    }
+
+    fn a_resolver() -> Resolver {
+        Resolver::new(
+            Arc::new(RpcClient::new("http://localhost:8899".into())),
+            Pubkey::new_unique(),
+            Duration::from_secs(30),
+        )
+    }
+
+    fn six_carried() -> Vec<String> {
+        (0..6).map(|_| Pubkey::new_unique().to_string()).collect()
+    }
+
+    #[test]
+    fn pump_hop_account_order_matches_captured_cpi() {
+        let r = a_resolver();
+        let k = pump_keys_fixture();
+        let carried = six_carried();
+        let hop = r.pump_hop(&k, k.base_mint, 7, &carried).expect("builds");
+        // program at [0], then the 24 CPI accounts.
+        assert_eq!(hop.metas.len(), 1 + 24);
+        assert_eq!(hop.metas[0].pubkey, PUMP_AMM_PROGRAM);
+        // pool-derived positions (CPI index shown in comment; slice = CPI+1).
+        assert_eq!(hop.metas[1].pubkey, k.pool); // 0
+        assert_eq!(hop.metas[2].pubkey, r.owner); // 1 user
+        assert_eq!(hop.metas[3].pubkey, k.global_config); // 2
+        assert_eq!(hop.metas[4].pubkey, k.base_mint); // 3
+        assert_eq!(hop.metas[5].pubkey, k.quote_mint); // 4
+        assert_eq!(hop.metas[8].pubkey, k.base_vault); // 7
+        assert_eq!(hop.metas[9].pubkey, k.quote_vault); // 8
+        assert_eq!(hop.metas[12].pubkey, TOKEN_2022_PROGRAM); // 11 base token prog
+        assert_eq!(hop.metas[13].pubkey, TOKEN_PROGRAM); // 12 quote token prog
+        assert_eq!(hop.metas[14].pubkey, SYSTEM_PROGRAM); // 13
+        assert_eq!(hop.metas[15].pubkey, ATA_PROGRAM); // 14
+        assert_eq!(hop.metas[16].pubkey, k.event_authority); // 15
+        assert_eq!(hop.metas[17].pubkey, PUMP_AMM_PROGRAM); // 16 program self
+        assert_eq!(hop.metas[18].pubkey, k.coin_creator_vault_ata); // 17
+        assert_eq!(hop.metas[19].pubkey, k.coin_creator_vault_authority); // 18
+        assert_eq!(hop.metas[21].pubkey, PUMP_FEE_PROGRAM); // 20
+                                                            // carried accounts land at CPI [9,10,19,21,22,23] → slice [10,11,20,22,23,24].
+        let c: Vec<Pubkey> = carried
+            .iter()
+            .map(|s| Pubkey::from_str(s).unwrap())
+            .collect();
+        assert_eq!(hop.metas[10].pubkey, c[0]); // 9 recipient
+        assert_eq!(hop.metas[11].pubkey, c[1]); // 10 recipient_ata
+        assert_eq!(hop.metas[20].pubkey, c[2]); // 19 fee_config
+        assert_eq!(hop.metas[22].pubkey, c[3]); // 21 fee_pool
+        assert_eq!(hop.metas[23].pubkey, c[4]); // 22 fee_pool_state
+        assert_eq!(hop.metas[24].pubkey, c[5]); // 23 fee_recipient_ata
+                                                // writable/signer flags exactly match the captured CPI.
+        let writable: Vec<usize> = (0..hop.metas.len())
+            .filter(|i| hop.metas[*i].is_writable)
+            .collect();
+        assert_eq!(writable, vec![1, 2, 6, 7, 8, 9, 11, 18, 24], "writable set");
+        let signers: Vec<usize> = (0..hop.metas.len())
+            .filter(|i| hop.metas[*i].is_signer)
+            .collect();
+        assert_eq!(signers, vec![2], "only the user signs");
+        // SELL sweeps user_base_ata (slice 6).
+        assert_eq!(hop.source_index, 6);
+        assert!(hop.a_to_b, "base in ⇒ is_sell");
+    }
+
+    #[test]
+    fn pump_hop_buy_uses_quote_source_index() {
+        let r = a_resolver();
+        let k = pump_keys_fixture();
+        let hop = r.pump_hop(&k, k.quote_mint, 1, &six_carried()).unwrap();
+        assert_eq!(hop.source_index, 7); // user_quote_ata
+        assert!(!hop.a_to_b);
+    }
+
+    #[test]
+    fn pump_hop_refuses_absent_or_short_carried_set() {
+        let r = a_resolver();
+        let k = pump_keys_fixture();
+        assert!(r.pump_hop(&k, k.base_mint, 1, &[]).is_err());
+        assert!(r.pump_hop(&k, k.base_mint, 1, &six_carried()[..5]).is_err());
+    }
+
+    #[test]
+    fn pump_hop_rejects_foreign_input_mint() {
+        let r = a_resolver();
+        let k = pump_keys_fixture();
+        assert!(r
+            .pump_hop(&k, Pubkey::new_unique(), 1, &six_carried())
+            .is_err());
     }
 
     #[test]

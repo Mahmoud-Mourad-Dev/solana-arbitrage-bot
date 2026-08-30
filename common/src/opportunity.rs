@@ -42,6 +42,16 @@ pub struct OpportunityHop {
     /// accounts and the quoted output can never disagree (prompt B4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin_arrays: Vec<i64>,
+    /// PumpSwap accounts that CANNOT be derived from pool state and must be
+    /// cloned from a recent successful on-chain tx: the rotating protocol-fee
+    /// recipient set and the fee-v2 accounts, in the fixed order
+    /// `[protocol_fee_recipient(9), protocol_fee_recipient_ata(10),
+    /// fee_config(19), fee_pool(21), fee_pool_state(22), fee_recipient_ata(23)]`.
+    /// EMPTY for every non-pump hop. For a PumpAmm hop an empty/short set is a
+    /// hard error in the resolver — never guessed, never defaulted (prompt P,
+    /// per docs/pump-fee-v2-layout.md: these seeds are undocumented + rotating).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pump_carried_accounts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

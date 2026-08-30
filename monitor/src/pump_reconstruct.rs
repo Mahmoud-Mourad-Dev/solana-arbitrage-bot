@@ -574,3 +574,34 @@ mod tests {
         assert_eq!(FEE_V2_INDICES, [19, 21, 22, 23]);
     }
 }
+
+#[cfg(test)]
+mod abi_source_guard {
+    //! `arb_common::ix` mirrors the pump constants whose source of truth lives
+    //! in THIS crate (proven byte-exact against captured mainnet sells). These
+    //! tests are the cross-crate guard the arb-common doc comments promise, so
+    //! monitor/executor/program can never drift on the pump encoding.
+    #[test]
+    fn common_pump_discriminators_match_source_of_truth() {
+        assert_eq!(
+            arb_common::ix::PUMP_SELL_DISCRIMINATOR,
+            super::SELL_DISCRIMINATOR
+        );
+        assert_eq!(
+            arb_common::ix::PUMP_SELL_DISCRIMINATOR,
+            crate::pump_amm::IX_SELL_DISCRIMINATOR
+        );
+        assert_eq!(
+            arb_common::ix::PUMP_BUY_DISCRIMINATOR,
+            crate::pump_amm::IX_BUY_DISCRIMINATOR
+        );
+    }
+
+    #[test]
+    fn common_pump_program_id_matches_source_of_truth() {
+        assert_eq!(
+            arb_common::ix::PUMP_AMM_PROGRAM_STR,
+            crate::pump_amm::PUMP_AMM_PROGRAM_ID
+        );
+    }
+}
